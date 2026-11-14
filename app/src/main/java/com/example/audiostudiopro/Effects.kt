@@ -31,6 +31,9 @@ data class FxParams(
     val eqLow: Float = 0f,
     val eqMid: Float = 0f,
     val eqHigh: Float = 0f,
+    val compressor: Float = 0f,
+    val doubler: Float = 0f,
+    val enhancer: Float = 0f,
     val clean: Boolean = false,
     val gate: Float = 0.5f,
     val overlay: OverlayPcm? = null
@@ -38,7 +41,6 @@ data class FxParams(
 
 object Effects {
 
-    /** يطبّق كل المؤثرات بالترتيب على عينات PCM 16-bit ويعيد عينات بنفس الصيغة. */
     fun process(data: ByteArray, channels: Int, sampleRate: Int, p: FxParams): ByteArray {
         var bytes = data
         if (p.clean) {
@@ -95,7 +97,23 @@ object Effects {
             applyEq3(buf, channels, sampleRate, p)
         }
 
-        // 3) Bass Boost
+        // 3) Vocal Enhancer: رفع خفيف للوضوح في الترددات المتوسطة والعالية
+        if (p.enhancer > 0f) {
+            val amt = p.enhancer.coerceIn(0f, 1f)
+            val a = 1f - exp(-2f * PI.toFloat() * 2500f / sampleRate)
+            for (c in 0 until channels) {
+                var lp = 0f
+                for (f in 0 until total) {
+                    val i = f * channels + c
+                    val x0 = buf[i]
+                    lp += a * (x0 - lp)
+                    val high = x0 - lp
+                    buf[i] = x0 + high * amt * 0.8f
+                }
+            }
+        }
+
+        // 4) Bass Boost
         if (p.bass > 0f) {
             val a = 1f - exp(-2f * PI.toFloat() * 150f / sampleRate)
             for (c in 0 until channels) {
@@ -108,7 +126,7 @@ object Effects {
             }
         }
 
-        // 4) Distortion
+        // 5) Distortion
         if (p.distortion > 0f) {
             val d = p.distortion.coerceIn(0f, 1f)
             val k = 1f + 3f * d
@@ -119,87 +137,35 @@ object Effects {
             }
         }
 
-        // 5) Chorus
+        // 6) Compressor: يرفع الأصوات الهادئة ويخفض العالية
+        if (p.compressor > 0f) {
+            applyCompressor(buf, channels, sampleRate, p.compressor.coerceIn(0f, 1f))
+        }
+
+        // 7) Chorus
         if (p.chorus > 0f) {
-            val amount = p.chorus.coerceIn(0f, 1f)
-            val src = buf.copyOf()
-            val baseDelay = 0.02f * sampleRate
-            val depth = 0.005f * sampleRate
-            val lfoStep = 2f * PI.toFloat() * 0.5f / sampleRate
-            for (f in 0 until total) {
-                val delay = baseDelay + depth * sin(lfoStep * f)
-                val srcPos = f - delay
-                for (c in 0 until channels) {
-                    val i = f * channels + c
-                    val wetSample = if (srcPos >= 0f) {
-                        val i0 = srcPos.toInt()
-                        val frac = srcPos - i0
-                        val a = src[i0 * channels + c]
-                        val b = src[min(i0 + 1, total - 1) * channels + c]
-                        a + (b - a) * frac
-                    } else {
-                        0f
-                    }
-                    buf[i] = src[i] * (1f - amount * 0.5f) + wetSample * amount * 0.5f
-                }
-            }
+            applyChorus(buf, channels, sampleRate, total, p.chorus.coerceIn(0f, 1f))
         }
 
-        // 6) Reverb
+        // 8) Vocal Doubler: نسخة مؤخرة قليلاً مع انحراف خفيف في النغمة
+        if (p.doubler > 0f) {
+            applyDoubler(buf, channels, sampleRate, total, p.doubler.coerceIn(0f, 1f))
+        }
+
+        // 9) Reverb
         if (p.reverb > 0f) {
-            val r = p.reverb.coerceIn(0f, 1f)
-            val fb = 0.6f + 0.25f * r
-            val delays = intArrayOf(
-                (0.0297f * sampleRate).toInt(),
-                (0.0371f * sampleRate).toInt(),
-                (0.0411f * sampleRate).toInt(),
-                (0.0437f * sampleRate).toInt()
-            )
-            val src = buf.copyOf()
-            for (c in 0 until channels) {
-                val rings = Array(delays.size) { FloatArray(delays[it]) }
-                val pos = IntArray(delays.size)
-                for (f in 0 until total) {
-                    val i = f * channels + c
-                    var acc = 0f
-                    for (k in delays.indices) {
-                        val ring = rings[k]
-                        val yOld = ring[pos[k]]
-                        val yNew = src[i] + fb * yOld
-                        ring[pos[k]] = yNew
-                        pos[k] = (pos[k] + 1) % ring.size
-                        acc += yNew
-                    }
-                    val wetS = acc / delays.size
-                    buf[i] = src[i] * (1f - 0.5f * r) + wetS * 0.5f * r
-                }
-            }
+            applyReverb(buf, channels, sampleRate, total, p.reverb.coerceIn(0f, 1f))
         }
 
-        // 7) Echo
+        // 10) Echo
         if (p.echoMix > 0f && p.echoFeedback > 0.01f) {
-            val fb = p.echoFeedback.coerceIn(0f, 0.85f)
-            val mix = p.echoMix.coerceIn(0f, 1f)
-            val dl = max(1, (p.echoDelaySec * sampleRate).toInt())
-            val src = buf.copyOf()
-            for (c in 0 until channels) {
-                val ring = FloatArray(dl)
-                var pos = 0
-                for (f in 0 until total) {
-                    val i = f * channels + c
-                    val echo = ring[pos]
-                    val y = (src[i] + echo * fb).coerceIn(-32768f, 32767f)
-                    ring[pos] = y
-                    pos = (pos + 1) % dl
-                    buf[i] = src[i] * (1f - mix) + y * mix
-                }
-            }
+            applyEcho(buf, channels, sampleRate, total, p)
         }
 
-        // 8) مزج صوت من الهاتف
+        // 11) مزج صوت من الهاتف
         p.overlay?.let { ov -> mixOverlay(buf, channels, sampleRate, total, ov) }
 
-        // 9) Fade In / Fade Out على المزيج النهائي
+        // 12) Fade In / Fade Out
         if (p.fadeInSec > 0f || p.fadeOutSec > 0f) {
             val fi = (p.fadeInSec * sampleRate).toInt().coerceIn(0, total)
             val fo = (p.fadeOutSec * sampleRate).toInt().coerceIn(0, total)
@@ -225,12 +191,6 @@ object Effects {
         return out
     }
 
-    /**
-     * Equalizer ثلاثي النطاق بتقسيم الترددات:
-     * منخفض = مرشح تمرير منخفض عند 250 هرتز،
-     * عالٍ = الباقي فوق مرشح تمرير منخفض عند 3000 هرتز،
-     * متوسط = الباقي بين النطاقين.
-     */
     private fun applyEq3(buf: FloatArray, channels: Int, sampleRate: Int, p: FxParams) {
         val gL = 10f.pow(p.eqLow / 20f)
         val gM = 10f.pow(p.eqMid / 20f)
@@ -254,14 +214,140 @@ object Effects {
         }
     }
 
-    /** يمزج الصوت الإضافي مع المقطع، مع تعديل السرعة والقنوات إن اختلفت عن المقطع. */
-    private fun mixOverlay(
-        buf: FloatArray,
-        channels: Int,
-        sampleRate: Int,
-        total: Int,
-        ov: OverlayPcm
-    ) {
+    /**
+     * Compressor بسيط: يتتبع مستوى الصوت ويخفض الكسب فوق العتبة.
+     * الكسب يُعاد لرفع الصوت الهادئ عبر التعويض (Makeup Gain).
+     */
+    private fun applyCompressor(buf: FloatArray, channels: Int, sampleRate: Int, amount: Float) {
+        val threshold = 32767f * 0.25f
+        val ratio = 1f + 7f * amount
+        val attack = exp(-1f / (0.005f * sampleRate))
+        val release = exp(-1f / (0.150f * sampleRate))
+        val frames = buf.size / channels
+        var env = 0f
+        for (f in 0 until frames) {
+            var level = 0f
+            for (c in 0 until channels) {
+                level = max(level, abs(buf[f * channels + c]))
+            }
+            val coeff = if (level > env) attack else release
+            env = coeff * env + (1f - coeff) * level
+
+            var gain = 1f
+            if (env > threshold) {
+                val over = env / threshold
+                gain = over.pow(1f / ratio - 1f)
+            }
+            val makeup = 1f + 0.6f * amount
+            for (c in 0 until channels) {
+                buf[f * channels + c] = (buf[f * channels + c] * gain * makeup)
+                    .coerceIn(-32768f, 32767f)
+            }
+        }
+    }
+
+    private fun applyChorus(buf: FloatArray, channels: Int, sampleRate: Int, total: Int, amount: Float) {
+        val src = buf.copyOf()
+        val baseDelay = 0.02f * sampleRate
+        val depth = 0.005f * sampleRate
+        val lfoStep = 2f * PI.toFloat() * 0.5f / sampleRate
+        for (f in 0 until total) {
+            val delay = baseDelay + depth * sin(lfoStep * f)
+            val srcPos = f - delay
+            for (c in 0 until channels) {
+                val i = f * channels + c
+                val wet = if (srcPos >= 0f) {
+                    val i0 = srcPos.toInt()
+                    val frac = srcPos - i0
+                    val a = src[i0 * channels + c]
+                    val b = src[min(i0 + 1, total - 1) * channels + c]
+                    a + (b - a) * frac
+                } else {
+                    0f
+                }
+                buf[i] = src[i] * (1f - amount * 0.5f) + wet * amount * 0.5f
+            }
+        }
+    }
+
+    /**
+     * Vocal Doubler: نسخة مؤخرة (15-25 ملّي ثانية) مع انحراف نغمة صغير متغير،
+     * فيبدو الصوت كأن شخصين يتكلمان معاً.
+     */
+    private fun applyDoubler(buf: FloatArray, channels: Int, sampleRate: Int, total: Int, amount: Float) {
+        val src = buf.copyOf()
+        val baseDelay = 0.018f * sampleRate
+        val depth = 0.004f * sampleRate
+        val lfoStep = 2f * PI.toFloat() * 0.8f / sampleRate
+        val mixAmt = 0.45f * amount
+        for (f in 0 until total) {
+            val delay = baseDelay + depth * sin(lfoStep * f)
+            val srcPos = f - delay
+            for (c in 0 until channels) {
+                val i = f * channels + c
+                val wet = if (srcPos >= 0f) {
+                    val i0 = srcPos.toInt()
+                    val frac = srcPos - i0
+                    val a = src[i0 * channels + c]
+                    val b = src[min(i0 + 1, total - 1) * channels + c]
+                    a + (b - a) * frac
+                } else {
+                    0f
+                }
+                buf[i] = src[i] + wet * mixAmt
+            }
+        }
+    }
+
+    private fun applyReverb(buf: FloatArray, channels: Int, sampleRate: Int, total: Int, r: Float) {
+        val fb = 0.6f + 0.25f * r
+        val delays = intArrayOf(
+            (0.0297f * sampleRate).toInt(),
+            (0.0371f * sampleRate).toInt(),
+            (0.0411f * sampleRate).toInt(),
+            (0.0437f * sampleRate).toInt()
+        )
+        val src = buf.copyOf()
+        for (c in 0 until channels) {
+            val rings = Array(delays.size) { FloatArray(delays[it]) }
+            val pos = IntArray(delays.size)
+            for (f in 0 until total) {
+                val i = f * channels + c
+                var acc = 0f
+                for (k in delays.indices) {
+                    val ring = rings[k]
+                    val yOld = ring[pos[k]]
+                    val yNew = src[i] + fb * yOld
+                    ring[pos[k]] = yNew
+                    pos[k] = (pos[k] + 1) % ring.size
+                    acc += yNew
+                }
+                val wetS = acc / delays.size
+                buf[i] = src[i] * (1f - 0.5f * r) + wetS * 0.5f * r
+            }
+        }
+    }
+
+    private fun applyEcho(buf: FloatArray, channels: Int, sampleRate: Int, total: Int, p: FxParams) {
+        val fb = p.echoFeedback.coerceIn(0f, 0.85f)
+        val mix = p.echoMix.coerceIn(0f, 1f)
+        val dl = max(1, (p.echoDelaySec * sampleRate).toInt())
+        val src = buf.copyOf()
+        for (c in 0 until channels) {
+            val ring = FloatArray(dl)
+            var pos = 0
+            for (f in 0 until total) {
+                val i = f * channels + c
+                val echo = ring[pos]
+                val y = (src[i] + echo * fb).coerceIn(-32768f, 32767f)
+                ring[pos] = y
+                pos = (pos + 1) % dl
+                buf[i] = src[i] * (1f - mix) + y * mix
+            }
+        }
+    }
+
+    private fun mixOverlay(buf: FloatArray, channels: Int, sampleRate: Int, total: Int, ov: OverlayPcm) {
         val ovFrames = ov.samples.size / ov.channels
         if (ovFrames == 0) return
         val ratio = ov.sampleRate.toFloat() / sampleRate
