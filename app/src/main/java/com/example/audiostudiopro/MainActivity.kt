@@ -82,7 +82,6 @@ fun AppRoot() {
     var tab by remember { mutableIntStateOf(0) }
     Column(modifier = Modifier.fillMaxSize()) {
         Box(modifier = Modifier.weight(1f)) {
-            // الرئيسية تبقى محمّلة دائماً حتى لا تضيع حالتها (الملف والمؤشرات)
             Box(modifier = if (tab == 0) Modifier.fillMaxSize() else Modifier.size(0.dp)) {
                 AudioStudioScreen()
             }
@@ -172,7 +171,6 @@ object PresetBus {
 
 /**
  * يحلل الملف المحمّل ويعيد (قيمة البوابة المقترحة، مستوى الضوضاء بالديسيبل).
- * يقص المقطع كاملاً إلى ملف مؤقت، يقرأ عيناته، ثم يحذف الملف.
  */
 fun analyzeNoise(context: Context, uri: Uri, durationSec: Float): Pair<Float, Float>? {
     val path = WavTrimmer.trim(context, uri, 0f, durationSec)
@@ -223,6 +221,9 @@ fun AudioStudioScreen() {
     var compAmt by remember { mutableFloatStateOf(0f) }
     var doublerAmt by remember { mutableFloatStateOf(0f) }
     var enhancerAmt by remember { mutableFloatStateOf(0f) }
+    var levelerAmt by remember { mutableFloatStateOf(0f) }
+    var speechEqAmt by remember { mutableFloatStateOf(0f) }
+    var dereverbAmt by remember { mutableFloatStateOf(0f) }
     var gateAmt by remember { mutableFloatStateOf(0.5f) }
     var cleanEnabled by remember { mutableStateOf(false) }
     var analyzing by remember { mutableStateOf(false) }
@@ -307,6 +308,9 @@ fun AudioStudioScreen() {
             compressor = compAmt,
             doubler = doublerAmt,
             enhancer = enhancerAmt,
+            leveler = levelerAmt,
+            speechEq = speechEqAmt,
+            dereverb = dereverbAmt,
             clean = cleanEnabled,
             gate = gateAmt
         )
@@ -350,6 +354,9 @@ fun AudioStudioScreen() {
         compAmt = 0f
         doublerAmt = 0f
         enhancerAmt = 0f
+        levelerAmt = 0f
+        speechEqAmt = 0f
+        dereverbAmt = 0f
         gateAmt = 0.5f
         cleanEnabled = false
         overlayVol = 0.5f
@@ -505,6 +512,9 @@ fun AudioStudioScreen() {
                 SliderRow("المنخفضة (أقل من 250 هرتز)", "${"%+.0f".format(eqLow)} dB", eqLow, -12f..12f, AccentBlue) { eqLow = it }
                 SliderRow("المتوسطة", "${"%+.0f".format(eqMid)} dB", eqMid, -12f..12f, AccentBlue) { eqMid = it }
                 SliderRow("العالية (أعلى من 3000 هرتز)", "${"%+.0f".format(eqHigh)} dB", eqHigh, -12f..12f, AccentBlue) { eqHigh = it }
+                SliderRow("وضوح الكلام (Speech EQ)", "${"%.0f".format(speechEqAmt * 100)}%", speechEqAmt, 0f..1f, AccentBlue) { speechEqAmt = it }
+                SliderRow("توحيد مستوى الكلام (Leveler)", "${"%.0f".format(levelerAmt * 100)}%", levelerAmt, 0f..1f, AccentBlue) { levelerAmt = it }
+                SliderRow("تقليل الصدى الداخلي (Dereverb)", "${"%.0f".format(dereverbAmt * 100)}%", dereverbAmt, 0f..1f, AccentBlue) { dereverbAmt = it }
                 SliderRow("قوة بوابة الضوضاء (Gate)", "${"%.0f".format(gateAmt * 100)}%", gateAmt, 0f..1f, AccentBlue) { gateAmt = it }
 
                 GradientButton(
