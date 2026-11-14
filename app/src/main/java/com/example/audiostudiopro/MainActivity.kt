@@ -1,8 +1,7 @@
 package com.example.audiostudiopro
 
 import android.content.Context
-import android.media.MediaExtractor
-import android.media.MediaFormat
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -103,23 +102,17 @@ fun AudioStudioScreen() {
     }
 }
 
-/** يقرأ مدة أول مسار صوتي في الملف بالثواني، ويعيد 0 عند الفشل. */
+/** يقرأ مدة الملف بالثواني باستخدام MediaMetadataRetriever، ويعيد 0 عند الفشل. */
 fun readDurationSec(context: Context, uri: Uri): Float {
-    val extractor = MediaExtractor()
+    val retriever = MediaMetadataRetriever()
     return try {
-        extractor.setDataSource(context, uri, null)
-        for (i in 0 until extractor.trackCount) {
-            val format = extractor.getTrackFormat(i)
-            val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
-            if (mime.startsWith("audio/") && format.containsKey(MediaFormat.KEY_DURATION)) {
-                return format.getLong(MediaFormat.KEY_DURATION) / 1_000_000f
-            }
-        }
-        0f
+        retriever.setDataSource(context, uri)
+        val ms = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+        (ms?.toLongOrNull() ?: 0L) / 1000f
     } catch (e: Exception) {
         0f
     } finally {
-        extractor.release()
+        retriever.release()
     }
 }
 
