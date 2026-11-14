@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -29,6 +30,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -78,7 +80,13 @@ fun AppRoot() {
     var tab by remember { mutableIntStateOf(0) }
     Column(modifier = Modifier.fillMaxSize()) {
         Box(modifier = Modifier.weight(1f)) {
-            if (tab == 0) AudioStudioScreen() else PresetsScreen()
+            // الرئيسية تبقى محمّلة دائماً حتى لا تضيع حالتها (الملف والمؤشرات)
+            Box(modifier = if (tab == 0) Modifier.fillMaxSize() else Modifier.size(0.dp)) {
+                AudioStudioScreen()
+            }
+            if (tab == 1) {
+                PresetsScreen()
+            }
         }
         NavigationBar(containerColor = Color(0xCC0D1B2A)) {
             NavigationBarItem(
@@ -120,7 +128,7 @@ fun PresetsScreen() {
                 modifier = Modifier.fillMaxWidth()
             ) {
                 PresetBus.pending = p
-                message = "تم اختيار: ${p.name}. ارجع للرئيسية لتطبيقها"
+                message = "تم تطبيق: ${p.name}. ارجع للرئيسية لترى المؤشرات"
             }
         }
 
@@ -136,7 +144,7 @@ fun PresetsScreen() {
                     modifier = Modifier.weight(1f)
                 ) {
                     PresetBus.pending = p
-                    message = "تم اختيار: ${p.name}. ارجع للرئيسية لتطبيقها"
+                    message = "تم تطبيق: ${p.name}. ارجع للرئيسية لترى المؤشرات"
                 }
                 Spacer(Modifier.width(8.dp))
                 GradientButton(
@@ -155,9 +163,9 @@ fun PresetsScreen() {
     }
 }
 
-/** ناقل بسيط لنقل المسبقة المختارة من صفحة المسبقات إلى الشاشة الرئيسية. */
+/** ناقل المسبقة المختارة. حالة مراقَبة حتى تلتقطها الشاشة الرئيسية فوراً. */
 object PresetBus {
-    var pending: Preset? = null
+    var pending: Preset? by mutableStateOf(null)
 }
 
 @Composable
@@ -203,27 +211,33 @@ fun AudioStudioScreen() {
         }
     }
 
-    // تطبيق المسبقة المختارة من صفحة المسبقات
+    // تطبيق المسبقة فور اختيارها من صفحة المسبقات
     val pending = PresetBus.pending
-    if (pending != null) {
-        echoMix = pending.echoMix
-        echoDelaySec = pending.echoDelay
-        echoFeedback = pending.echoFeedback
-        bassAmt = pending.bass
-        distAmt = pending.distortion
-        chorusAmt = pending.chorus
-        reverbAmt = pending.reverb
-        pitchSt = pending.pitch
-        eqLow = pending.eqLow
-        eqMid = pending.eqMid
-        eqHigh = pending.eqHigh
-        compAmt = pending.compressor
-        doublerAmt = pending.doubler
-        enhancerAmt = pending.enhancer
-        gateAmt = pending.gate
-        cleanEnabled = pending.clean
-        status = "تم تطبيق مسبقة: ${pending.name}"
-        PresetBus.pending = null
+    LaunchedEffect(pending) {
+        if (pending != null) {
+            echoMix = pending.echoMix
+            echoDelaySec = pending.echoDelay
+            echoFeedback = pending.echoFeedback
+            bassAmt = pending.bass
+            distAmt = pending.distortion
+            chorusAmt = pending.chorus
+            reverbAmt = pending.reverb
+            pitchSt = pending.pitch
+            eqLow = pending.eqLow
+            eqMid = pending.eqMid
+            eqHigh = pending.eqHigh
+            compAmt = pending.compressor
+            doublerAmt = pending.doubler
+            enhancerAmt = pending.enhancer
+            gateAmt = pending.gate
+            cleanEnabled = pending.clean
+            status = if (sourceUri == null) {
+                "تم تطبيق مسبقة: ${pending.name}. اختر ملفاً لتسمع النتيجة"
+            } else {
+                "تم تطبيق مسبقة: ${pending.name}"
+            }
+            PresetBus.pending = null
+        }
     }
 
     fun loadSource(uri: Uri) {
@@ -237,7 +251,6 @@ fun AudioStudioScreen() {
         endSec = durationSec
         fadeInSec = 0f
         fadeOutSec = 0f
-        echoMix = 0f
         status = if (durationSec > 0f) "تم تحميل الملف" else "تعذر قراءة مدة الملف"
     }
 
@@ -619,4 +632,4 @@ fun readDurationSec(context: Context, uri: Uri): Float {
     } finally {
         retriever.release()
     }
-} 
+}
