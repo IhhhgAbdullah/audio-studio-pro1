@@ -54,7 +54,9 @@ class MainActivity : ComponentActivity() {
                     onSurface = Color(0xFFF5E6B8)
                 )
             ) {
-                AudioStudioScreen()
+                RgbBackground {
+                    AudioStudioScreen()
+                }
             }
         }
     }
