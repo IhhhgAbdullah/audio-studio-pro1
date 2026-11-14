@@ -2,6 +2,7 @@ package com.example.audiostudiopro
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.media.MediaMetadataRetriever
 import android.media.MediaPlayer
 import android.net.Uri
@@ -40,6 +41,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -110,7 +112,7 @@ fun PresetsScreen() {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         AppHeader()
-        Text("مسبقات جاهزة", color = AccentGold, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, fontSize = 16.sp)
+        Text("مسبقات جاهزة", color = AccentGold, fontWeight = FontWeight.Bold, fontSize = 16.sp)
         Preset.BUILT_IN.forEach { p ->
             GradientButton(
                 text = p.name,
@@ -122,7 +124,7 @@ fun PresetsScreen() {
             }
         }
 
-        Text("مسبقاتي", color = AccentGold, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, fontSize = 16.sp)
+        Text("مسبقاتي", color = AccentGold, fontWeight = FontWeight.Bold, fontSize = 16.sp)
         if (userPresets.isEmpty()) {
             Text("لا توجد مسبقات خاصة بعد", color = Color(0xFF9FB3C8), fontSize = 13.sp)
         }
@@ -190,6 +192,7 @@ fun AudioStudioScreen() {
     var player by remember { mutableStateOf<MediaPlayer?>(null) }
     var isPlaying by remember { mutableStateOf(false) }
     var isRecording by remember { mutableStateOf(false) }
+    var savedUri by remember { mutableStateOf<Uri?>(null) }
     val recorder = remember { Recorder(context) }
 
     DisposableEffect(Unit) {
@@ -304,6 +307,20 @@ fun AudioStudioScreen() {
         cleanEnabled = false
         overlayVol = 0.5f
         status = "تمت إعادة ضبط المؤثرات"
+    }
+
+    fun shareLastSaved() {
+        val shareUri = AudioExporter.lastSavedUri
+        if (shareUri == null) {
+            status = "احفظ الملف أولاً ثم شاركه"
+            return
+        }
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "audio/wav"
+            putExtra(Intent.EXTRA_STREAM, shareUri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(intent, "مشاركة الملف"))
     }
 
     val picker = rememberLauncherForActivityResult(
@@ -555,12 +572,23 @@ fun AudioStudioScreen() {
                         val path = withContext(Dispatchers.IO) {
                             AudioExporter.trimWithFades(context, uri, s, e, p, ov, ovv)
                         }
+                        savedUri = AudioExporter.lastSavedUri
                         status = if (path != null) {
                             "تم الحفظ في: $path"
                         } else {
                             "فشل الحفظ: ${AudioExporter.lastError}"
                         }
                     }
+                }
+            }
+
+            if (savedUri != null) {
+                GradientButton(
+                    text = "مشاركة آخر ملف محفوظ",
+                    brush = Brush.horizontalGradient(listOf(AccentCyan, AccentPurple)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    shareLastSaved()
                 }
             }
         }
@@ -587,4 +615,4 @@ fun readDurationSec(context: Context, uri: Uri): Float {
     } finally {
         retriever.release()
     }
-} 
+}
