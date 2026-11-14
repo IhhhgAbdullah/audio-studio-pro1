@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import androidx.core.content.FileProvider
 import java.io.File
 import java.io.FileOutputStream
 import java.io.RandomAccessFile
@@ -15,6 +16,9 @@ object AudioExporter {
     /** سبب آخر فشل، ليُعرض للمستخدم. */
     var lastError: String? = null
 
+    /** Uri آخر ملف محفوظ، يُستخدم لزر المشاركة. */
+    var lastSavedUri: Uri? = null
+
     private class Rendered(
         val bytes: ByteArray,
         val sampleRate: Int,
@@ -22,7 +26,6 @@ object AudioExporter {
         val bits: Int
     )
 
-    /** يحمّل ملف الصوت الإضافي كاملاً ويحوله إلى عينات float. */
     private fun loadOverlay(context: Context, uri: Uri, volume: Float): OverlayPcm {
         val path = WavTrimmer.trim(context, uri, 0f, 100000f)
             ?: Mp3Trimmer.trim(context, uri, 0f, 100000f)
@@ -50,7 +53,6 @@ object AudioExporter {
         }
     }
 
-    /** يقص المقطع ثم يطبّق المؤثرات. يُستخدم للمعاينة والحفظ معاً. */
     private fun render(
         context: Context,
         uri: Uri,
@@ -102,6 +104,7 @@ object AudioExporter {
         overlayVolume: Float
     ): String? {
         lastError = null
+        lastSavedUri = null
         return try {
             val r = render(context, uri, startSec, endSec, p, overlayUri, overlayVolume)
             val outTemp = File(context.cacheDir, "export.wav")
@@ -161,6 +164,7 @@ object AudioExporter {
             values.clear()
             values.put(MediaStore.Downloads.IS_PENDING, 0)
             resolver.update(itemUri, values, null, null)
+            lastSavedUri = itemUri
             return "Download/AudioStudioPro/$name"
         } else {
             val dir = File(
@@ -170,6 +174,7 @@ object AudioExporter {
             dir.mkdirs()
             val dest = File(dir, name)
             file.copyTo(dest, overwrite = true)
+            lastSavedUri = Uri.fromFile(dest)
             return dest.absolutePath
         }
     }
