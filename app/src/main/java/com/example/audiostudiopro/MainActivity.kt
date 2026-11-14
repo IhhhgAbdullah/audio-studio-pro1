@@ -196,6 +196,41 @@ fun analyzeNoise(context: Context, uri: Uri, durationSec: Float): Pair<Float, Fl
     }
 }
 
+/**
+ * يحلل النغمة لملف محمّل: يعيد النوتة الأكثر تكراراً، ونسبة النوافذ الواضحة.
+ */
+fun analyzePitchOf(context: Context, uri: Uri, durationSec: Float): String? {
+    val path = WavTrimmer.trim(context, uri, 0f, durationSec)
+        ?: Mp3Trimmer.trim(context, uri, 0f, durationSec)
+        ?: return null
+    val f = File(path)
+    return try {
+        val h = WavTrimmer.readWavHeader(f) ?: return null
+        if (h.bitsPerSample != 16) return null
+        val data = ByteArray(h.dataSize)
+        RandomAccessFile(f, "r").use { raf ->
+            raf.seek(h.dataOffset)
+            raf.readFully(data)
+        }
+        val results = PitchDetector.analyze(data, h.channels, h.sampleRate)
+        val windowsTotal = max(1, (data.size / (2 * h.channels)) / (h.sampleRate / 20) * 2)
+        if (results.isEmpty()) {
+            "لم تُكشف نغمة واضحة في الملف"
+        } else {
+            val counts = results.groupingBy { it.noteName }.eachCount()
+            val topNote = counts.maxByOrNull { it.value }!!.key
+            val avgHz = results.map { it.frequencyHz }.average()
+            val clarity = (results.size * 100f / windowsTotal).coerceAtMost(100f)
+            "النوتة الأكثر تكراراً: $topNote، متوسط التردد: ${"%.1f".format(avgHz)} Hz، " +
+                "النوافذ الواضحة: ${"%.0f".format(clarity)}%"
+        }
+    } catch (e: Exception) {
+        null
+    } finally {
+        f.delete()
+    }
+}
+
 @Composable
 fun AudioStudioScreen() {
     val context = LocalContext.current
@@ -227,6 +262,7 @@ fun AudioStudioScreen() {
     var gateAmt by remember { mutableFloatStateOf(0.5f) }
     var cleanEnabled by remember { mutableStateOf(false) }
     var analyzing by remember { mutableStateOf(false) }
+    var pitchAnalyzing by remember { mutableStateOf(false) }
     var showLyrics by remember { mutableStateOf(false) }
     var overlayUri by remember { mutableStateOf<Uri?>(null) }
     var overlayVol by remember { mutableFloatStateOf(0.5f) }
@@ -520,6 +556,25 @@ fun AudioStudioScreen() {
                 modifier = Modifier.fillMaxWidth()
             ) {
                 showLyrics = true
+            }
+
+            GradientButton(
+                text = if (pitchAnalyzing) "جارٍ تحليل النغمة..." else "تحليل النغمة (Pitch)",
+                brush = Brush.horizontalGradient(listOf(AccentCyan, AccentPurple)),
+                enabled = !pitchAnalyzing,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                val src = uri
+                val dur = durationSec
+                pitchAnalyzing = true
+                status = "جارٍ تحليل النغمة..."
+                scope.launch {
+                    val result = withContext(Dispatchers.IO) {
+                        analyzePitchOf(context, src, dur)
+                    }
+                    pitchAnalyzing = false
+                    status = result ?: "تعذر تحليل النغمة، جرّب ملف WAV"
+                }
             }
 
             SectionCard(title = "القص", icon = "✂️", accent = AccentPink, initiallyExpanded = true) {
