@@ -52,6 +52,8 @@ fun AudioStudioScreen() {
     var durationSec by remember { mutableFloatStateOf(0f) }
     var startSec by remember { mutableFloatStateOf(0f) }
     var endSec by remember { mutableFloatStateOf(0f) }
+    var fadeInSec by remember { mutableFloatStateOf(0f) }
+    var fadeOutSec by remember { mutableFloatStateOf(0f) }
     var status by remember { mutableStateOf("اختر ملف صوت للبدء") }
     var player by remember { mutableStateOf<MediaPlayer?>(null) }
     var isPlaying by remember { mutableStateOf(false) }
@@ -72,12 +74,13 @@ fun AudioStudioScreen() {
             durationSec = readDurationSec(context, uri)
             startSec = 0f
             endSec = durationSec
+            fadeInSec = 0f
+            fadeOutSec = 0f
             player = createPlayer(context, uri)
             status = if (durationSec > 0f) "تم تحميل الملف" else "تعذر قراءة مدة الملف"
         }
     }
 
-    // مراقبة التشغيل وإيقافه عند الوصول إلى نهاية المقطع
     LaunchedEffect(isPlaying) {
         while (isPlaying) {
             val p = player
@@ -91,7 +94,7 @@ fun AudioStudioScreen() {
 
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text("Audio Studio Pro", style = MaterialTheme.typography.headlineMedium)
@@ -118,6 +121,22 @@ fun AudioStudioScreen() {
                 valueRange = 0f..max(durationSec, 0.1f)
             )
 
+            val maxFade = max(0.1f, min(5f, (endSec - startSec) / 2f))
+
+            Text("تدرج الدخول (Fade In): ${"%.1f".format(fadeInSec)} ث")
+            Slider(
+                value = fadeInSec,
+                onValueChange = { fadeInSec = it },
+                valueRange = 0f..maxFade
+            )
+
+            Text("تدرج الخروج (Fade Out): ${"%.1f".format(fadeOutSec)} ث")
+            Slider(
+                value = fadeOutSec,
+                onValueChange = { fadeOutSec = it },
+                valueRange = 0f..maxFade
+            )
+
             Button(onClick = {
                 val p = player ?: return@Button
                 if (isPlaying) {
@@ -135,7 +154,17 @@ fun AudioStudioScreen() {
             Button(onClick = {
                 player?.pause()
                 isPlaying = false
-                status = trimAudio(context, uri, startSec, endSec)
+                status = "جارٍ القص والحفظ..."
+                val path = AudioExporter.trimWithFades(
+                    context, uri, startSec, endSec,
+                    fadeInSec.coerceIn(0f, maxFade),
+                    fadeOutSec.coerceIn(0f, maxFade)
+                )
+                status = if (path != null) {
+                    "تم الحفظ في: $path"
+                } else {
+                    "فشل القص، تأكد أن الملف صوتي وصالح"
+                }
             }) {
                 Text("قص وحفظ")
             }
@@ -157,7 +186,7 @@ fun createPlayer(context: Context, uri: Uri): MediaPlayer? {
     }
 }
 
-/** يقرأ مدة الملف بالثواني باستخدام MediaMetadataRetriever، ويعيد 0 عند الفشل. */
+/** يقرأ مدة الملف بالثواني، ويعيد 0 عند الفشل. */
 fun readDurationSec(context: Context, uri: Uri): Float {
     val retriever = MediaMetadataRetriever()
     return try {
@@ -169,14 +198,4 @@ fun readDurationSec(context: Context, uri: Uri): Float {
     } finally {
         retriever.release()
     }
-}
-
-/** يحاول القص أولاً كملف WAV، ثم كملف MP3 أو غيره عبر فك الترميز. */
-fun trimAudio(context: Context, uri: Uri, startSec: Float, endSec: Float): String {
-    if (endSec <= startSec) return "نهاية القص يجب أن تكون بعد البداية"
-
-    val path = WavTrimmer.trim(context, uri, startSec, endSec)
-        ?: Mp3Trimmer.trim(context, uri, startSec, endSec)
-
-    return if (path != null) "تم الحفظ: $path" else "فشل القص، تأكد أن الملف صوتي وصالح"
 }
