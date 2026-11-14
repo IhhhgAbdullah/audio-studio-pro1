@@ -6,7 +6,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
-import androidx.core.content.FileProvider
 import java.io.File
 import java.io.FileOutputStream
 import java.io.RandomAccessFile
@@ -60,7 +59,9 @@ object AudioExporter {
         endSec: Float,
         p: FxParams,
         overlayUri: Uri?,
-        overlayVolume: Float
+        overlayVolume: Float,
+        introUri: Uri?,
+        introVolume: Float
     ): Rendered {
         val trimmedPath = WavTrimmer.trim(context, uri, startSec, endSec)
             ?: Mp3Trimmer.trim(context, uri, startSec, endSec)
@@ -83,11 +84,18 @@ object AudioExporter {
                 p
             }
 
-            val bytes = if (header.bitsPerSample == 16) {
+            var bytes = if (header.bitsPerSample == 16) {
                 Effects.process(data, header.channels, header.sampleRate, full)
             } else {
                 data
             }
+
+            // اللحن يُلحق بعد المؤثرات، فلا يتأثر بها
+            if (introUri != null && header.bitsPerSample == 16) {
+                val intro = IntroTrack.load(context, introUri, introVolume)
+                bytes = IntroTrack.prepend(bytes, header.channels, header.sampleRate, intro)
+            }
+
             return Rendered(bytes, header.sampleRate, header.channels, header.bitsPerSample)
         } finally {
             trimmed.delete()
@@ -101,12 +109,17 @@ object AudioExporter {
         endSec: Float,
         p: FxParams,
         overlayUri: Uri?,
-        overlayVolume: Float
+        overlayVolume: Float,
+        introUri: Uri? = null,
+        introVolume: Float = 1f
     ): String? {
         lastError = null
         lastSavedUri = null
         return try {
-            val r = render(context, uri, startSec, endSec, p, overlayUri, overlayVolume)
+            val r = render(
+                context, uri, startSec, endSec, p,
+                overlayUri, overlayVolume, introUri, introVolume
+            )
             val outTemp = File(context.cacheDir, "export.wav")
             FileOutputStream(outTemp).use { out ->
                 WavTrimmer.writeWavHeader(out, r.sampleRate, r.channels, r.bits, r.bytes.size)
@@ -129,11 +142,16 @@ object AudioExporter {
         endSec: Float,
         p: FxParams,
         overlayUri: Uri?,
-        overlayVolume: Float
+        overlayVolume: Float,
+        introUri: Uri? = null,
+        introVolume: Float = 1f
     ): File? {
         lastError = null
         return try {
-            val r = render(context, uri, startSec, endSec, p, overlayUri, overlayVolume)
+            val r = render(
+                context, uri, startSec, endSec, p,
+                overlayUri, overlayVolume, introUri, introVolume
+            )
             val out = File(context.cacheDir, "preview.wav")
             FileOutputStream(out).use { o ->
                 WavTrimmer.writeWavHeader(o, r.sampleRate, r.channels, r.bits, r.bytes.size)
