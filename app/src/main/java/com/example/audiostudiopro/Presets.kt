@@ -79,9 +79,23 @@ data class Preset(
                 echoDelay = 0.6f,
                 echoFeedback = 0.25f,
                 compressor = 0.2f,
-                eqLow = 0f,
                 eqMid = -1f,
                 eqHigh = -4f,
+                builtIn = true
+            ),
+            Preset(
+                "تأثير بودكاست",
+                bass = 0.1f,
+                enhancer = 0.5f,
+                compressor = 0.6f,
+                echoMix = 0.08f,
+                echoDelay = 0.2f,
+                echoFeedback = 0.2f,
+                eqLow = 2f,
+                eqMid = 2f,
+                eqHigh = 1f,
+                clean = true,
+                gate = 0.5f,
                 builtIn = true
             )
         )
