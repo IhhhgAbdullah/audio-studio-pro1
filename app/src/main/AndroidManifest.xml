@@ -10,7 +10,7 @@
         android:allowBackup="true"
         android:label="Audio Studio Pro"
         android:supportsRtl="true"
-        android:theme="@style/Theme.AudioStudioPro">
+        android:theme="@android:style/Theme.Material.NoActionBar">
 
         <activity
             android:name=".MainActivity"
