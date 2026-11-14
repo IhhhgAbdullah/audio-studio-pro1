@@ -12,14 +12,17 @@ import java.io.RandomAccessFile
 
 object AudioExporter {
 
-    /** يقص الملف، يطبق تدرج الدخول والخروج، ثم يحفظه في Downloads. يعيد المسار المعروض أو null. */
+    /** يقص الملف، ثم يطبق Echo والتدرجات، ثم يحفظه في Downloads. يعيد المسار المعروض أو null. */
     fun trimWithFades(
         context: Context,
         uri: Uri,
         startSec: Float,
         endSec: Float,
         fadeInSec: Float,
-        fadeOutSec: Float
+        fadeOutSec: Float,
+        echoDelaySec: Float,
+        echoFeedback: Float,
+        echoMix: Float
     ): String? {
         val trimmedPath = WavTrimmer.trim(context, uri, startSec, endSec)
             ?: Mp3Trimmer.trim(context, uri, startSec, endSec)
@@ -35,18 +38,27 @@ object AudioExporter {
                 raf.readFully(data)
             }
 
-            val finalData = if (header.bitsPerSample == 16 && (fadeInSec > 0f || fadeOutSec > 0f)) {
-                AudioEffects.applyFades(data, header.channels, header.sampleRate, fadeInSec, fadeOutSec)
-            } else {
-                data
+            var processed = data
+            if (header.bitsPerSample == 16) {
+                if (echoMix > 0f && echoDelaySec > 0f) {
+                    processed = AudioEffects.applyEcho(
+                        processed, header.channels, header.sampleRate,
+                        echoDelaySec, echoFeedback, echoMix
+                    )
+                }
+                if (fadeInSec > 0f || fadeOutSec > 0f) {
+                    processed = AudioEffects.applyFades(
+                        processed, header.channels, header.sampleRate, fadeInSec, fadeOutSec
+                    )
+                }
             }
 
             val outTemp = File(context.cacheDir, "export.wav")
             FileOutputStream(outTemp).use { out ->
                 WavTrimmer.writeWavHeader(
-                    out, header.sampleRate, header.channels, header.bitsPerSample, finalData.size
+                    out, header.sampleRate, header.channels, header.bitsPerSample, processed.size
                 )
-                out.write(finalData)
+                out.write(processed)
             }
 
             val name = "AudioStudioPro_${System.currentTimeMillis()}.wav"
@@ -96,8 +108,66 @@ object AudioExporter {
     }
 }
 
-/** مؤثرات بسيطة تعمل على عينات PCM 16-bit. */
+/** مؤثرات تعمل على عينات PCM 16-bit. */
 object AudioEffects {
+
+    /**
+     * Echo احترافي: حلقة تأخير مع تغذية راجعة (Feedback) ومزج (Mix).
+     * يمتد الصدى بعد نهاية المقطع حتى يتلاشى إلى -60 dB، بحد أقصى 6 ثوانٍ.
+     */
+    fun applyEcho(
+        data: ByteArray,
+        channels: Int,
+        sampleRate: Int,
+        delaySec: Float,
+        feedback: Float,
+        mix: Float
+    ): ByteArray {
+        val inFrames = data.size / (2 * channels)
+        if (inFrames == 0) return data
+
+        val fb = feedback.coerceIn(0f, 0.85f)
+        val wetMix = mix.coerceIn(0f, 1f)
+        val delayFrames = (delaySec * sampleRate).toInt().coerceAtLeast(1)
+
+        // عدد الفريمات اللازمة لتلاشي الصدى إلى -60 dB
+        val tailFrames = if (fb <= 0.01f) {
+            0
+        } else {
+            val repeats = kotlin.math.ln(0.001f) / kotlin.math.ln(fb)
+            min(sampleRate * 6, (delayFrames * repeats).toInt())
+        }
+
+        val totalFrames = inFrames + tailFrames
+        val ch = channels
+        val total = totalFrames * ch
+
+        val dry = FloatArray(total)
+        for (i in 0 until inFrames * ch) {
+            val idx = i * 2
+            dry[i] = ((data[idx].toInt() and 0xff) or (data[idx + 1].toInt() shl 8))
+                .toShort().toFloat()
+        }
+
+        val wet = FloatArray(total)
+        val out = ByteArray(total * 2)
+        val delayStride = delayFrames * ch
+
+        for (f in 0 until totalFrames) {
+            for (c in 0 until ch) {
+                val i = f * ch + c
+                val echo = if (f >= delayFrames) wet[i - delayStride] * fb else 0f
+                val y = (dry[i] + echo).coerceIn(-32768f, 32767f)
+                wet[i] = y
+
+                val mixed = (dry[i] * (1f - wetMix) + y * wetMix)
+                    .toInt().coerceIn(-32768, 32767)
+                out[i * 2] = (mixed and 0xff).toByte()
+                out[i * 2 + 1] = (mixed shr 8).toByte()
+            }
+        }
+        return out
+    }
 
     fun applyFades(
         data: ByteArray,
@@ -134,3 +204,5 @@ object AudioEffects {
         return out
     }
 }
+
+private fun min(a: Int, b: Int): Int = if (a < b) a else b
