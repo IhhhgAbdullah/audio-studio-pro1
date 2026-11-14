@@ -24,7 +24,8 @@ object AudioExporter {
         fadeOutSec: Float,
         echoDelaySec: Float,
         echoFeedback: Float,
-        echoMix: Float
+        echoMix: Float,
+        clean: Boolean
     ): String? {
         lastError = null
         return try {
@@ -45,6 +46,11 @@ object AudioExporter {
 
             var processed = data
             if (header.bitsPerSample == 16) {
+                if (clean) {
+                    processed = AudioCleaner.clean(
+                        processed, header.channels, header.sampleRate, 0.5f
+                    )
+                }
                 if (echoMix > 0f && echoDelaySec > 0f) {
                     processed = AudioEffects.applyEcho(
                         processed, header.channels, header.sampleRate,
