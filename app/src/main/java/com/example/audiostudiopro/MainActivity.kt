@@ -51,6 +51,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileOutputStream
 import java.io.RandomAccessFile
 import kotlin.math.max
 import kotlin.math.min
@@ -169,9 +170,7 @@ object PresetBus {
     var pending: Preset? by mutableStateOf(null)
 }
 
-/**
- * يحلل الملف المحمّل ويعيد (قيمة البوابة المقترحة، مستوى الضوضاء بالديسيبل).
- */
+/** يحلل الملف المحمّل ويعيد (قيمة البوابة المقترحة، مستوى الضوضاء بالديسيبل). */
 fun analyzeNoise(context: Context, uri: Uri, durationSec: Float): Pair<Float, Float>? {
     val path = WavTrimmer.trim(context, uri, 0f, durationSec)
         ?: Mp3Trimmer.trim(context, uri, 0f, durationSec)
@@ -196,9 +195,7 @@ fun analyzeNoise(context: Context, uri: Uri, durationSec: Float): Pair<Float, Fl
     }
 }
 
-/**
- * يحلل النغمة لملف محمّل: يعيد النوتة الأكثر تكراراً، ونسبة النوافذ الواضحة.
- */
+/** يحلل النغمة لملف محمّل: يعيد النوتة الأكثر تكراراً، ونسبة النوافذ الواضحة. */
 fun analyzePitchOf(context: Context, uri: Uri, durationSec: Float): String? {
     val path = WavTrimmer.trim(context, uri, 0f, durationSec)
         ?: Mp3Trimmer.trim(context, uri, 0f, durationSec)
@@ -229,6 +226,43 @@ fun analyzePitchOf(context: Context, uri: Uri, durationSec: Float): String? {
     } finally {
         f.delete()
     }
+}
+
+/** يمزج الموسيقى مع ملف WAV ويكتب الناتج في ملف جديد. */
+fun mixMusicFile(context: Context, wav: File, music: OverlayPcm, ms: MusicSettings): File? {
+    return try {
+        val h = WavTrimmer.readWavHeader(wav) ?: return null
+        if (h.bitsPerSample != 16) return null
+        val data = ByteArray(h.dataSize)
+        RandomAccessFile(wav, "r").use { raf ->
+            raf.seek(h.dataOffset)
+            raf.readFully(data)
+        }
+        val mixed = MusicMix.mix(data, h.channels, h.sampleRate, music, ms)
+        val out = File(context.cacheDir, "mixed.wav")
+        FileOutputStream(out).use { o ->
+            WavTrimmer.writeWavHeader(o, h.sampleRate, h.channels, 16, mixed.size)
+            o.write(mixed)
+        }
+        out
+    } catch (e: Exception) {
+        null
+    }
+}
+
+/** يجهّز الملف النهائي للمعاينة أو الحفظ: القص والمؤثرات ثم الموسيقى المرافقة. */
+fun buildPreview(
+    context: Context,
+    uri: Uri,
+    s: Float,
+    e: Float,
+    p: FxParams,
+    music: OverlayPcm?,
+    ms: MusicSettings
+): File? {
+    val base = AudioExporter.renderPreview(context, uri, s, e, p) ?: return null
+    if (music == null || ms.volume <= 0f) return base
+    return mixMusicFile(context, base, music, ms)
 }
 
 @Composable
@@ -264,9 +298,18 @@ fun AudioStudioScreen() {
     var analyzing by remember { mutableStateOf(false) }
     var pitchAnalyzing by remember { mutableStateOf(false) }
     var showLyrics by remember { mutableStateOf(false) }
-    var overlayUri by remember { mutableStateOf<Uri?>(null) }
-    var overlayVol by remember { mutableFloatStateOf(0.5f) }
+
     var musicUri by remember { mutableStateOf<Uri?>(null) }
+    var musicPcm by remember { mutableStateOf<OverlayPcm?>(null) }
+    var musicLoading by remember { mutableStateOf(false) }
+    var musicVol by remember { mutableFloatStateOf(0.5f) }
+    var musicDelay by remember { mutableFloatStateOf(0f) }
+    var musicOffset by remember { mutableFloatStateOf(0f) }
+
+    var previewFile by remember { mutableStateOf<File?>(null) }
+    var previewKey by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+
     var status by remember { mutableStateOf("اختر ملف صوت أو سجّل للبدء") }
     var player by remember { mutableStateOf<MediaPlayer?>(null) }
     var isPlaying by remember { mutableStateOf(false) }
@@ -311,11 +354,32 @@ fun AudioStudioScreen() {
         }
     }
 
-    fun loadSource(uri: Uri) {
+    fun stopPlayback() {
         player?.release()
         player = null
         isPlaying = false
+    }
 
+    fun startPlayback(file: File) {
+        stopPlayback()
+        val mp = MediaPlayer()
+        try {
+            mp.setDataSource(file.absolutePath)
+            mp.prepare()
+            mp.setOnCompletionListener { isPlaying = false }
+            mp.start()
+            player = mp
+            isPlaying = true
+        } catch (ex: Exception) {
+            mp.release()
+            status = "تعذر تشغيل المعاينة"
+        }
+    }
+
+    fun loadSource(uri: Uri) {
+        stopPlayback()
+        previewFile = null
+        previewKey = null
         sourceUri = uri
         durationSec = readDurationSec(context, uri)
         startSec = 0f
@@ -354,6 +418,18 @@ fun AudioStudioScreen() {
             gate = gateAmt
         )
     }
+
+    fun currentMusic(): MusicSettings =
+        MusicSettings(volume = musicVol, delaySec = musicDelay, offsetSec = musicOffset)
+
+    /** مفتاح يصف كل ما يؤثر على المعاينة. إذا تغيّر، تُعاد تعبئة المعاينة. */
+    fun currentKey(): String = listOf(
+        sourceUri?.toString(), startSec, endSec, fadeInSec, fadeOutSec,
+        echoDelaySec, echoFeedback, echoMix, bassAmt, distAmt, chorusAmt, reverbAmt,
+        pitchSt, speedAmt, eqLow, eqMid, eqHigh, compAmt, doublerAmt, enhancerAmt,
+        levelerAmt, speechEqAmt, dereverbAmt, cleanEnabled, gateAmt,
+        musicUri?.toString(), musicVol, musicDelay, musicOffset
+    ).joinToString("|")
 
     fun currentAsPreset(name: String) = Preset(
         name = name,
@@ -399,7 +475,6 @@ fun AudioStudioScreen() {
         dereverbAmt = 0f
         gateAmt = 0.5f
         cleanEnabled = false
-        overlayVol = 0.5f
         status = "تمت إعادة ضبط المؤثرات"
     }
 
@@ -423,21 +498,24 @@ fun AudioStudioScreen() {
         if (uri != null) loadSource(uri)
     }
 
-    val overlayPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        if (uri != null) {
-            overlayUri = uri
-            status = "تمت إضافة ملف المزج"
-        }
-    }
-
     val musicPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri != null) {
             musicUri = uri
-            status = "تم اختيار الموسيقى المرافقة. اسمعها بالسماعة السلكية أثناء التسجيل"
+            musicPcm = null
+            musicLoading = true
+            status = "جارٍ تحميل الموسيقى..."
+            scope.launch {
+                val pcm = withContext(Dispatchers.IO) { MusicMix.load(context, uri) }
+                musicPcm = pcm
+                musicLoading = false
+                status = if (pcm == null) {
+                    "تعذر قراءة ملف الموسيقى، جرّب WAV أو MP3"
+                } else {
+                    "تم تحميل الموسيقى المرافقة"
+                }
+            }
         }
     }
 
@@ -445,9 +523,9 @@ fun AudioStudioScreen() {
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
-            if (recorder.start(musicUri)) {
+            if (recorder.start()) {
                 isRecording = true
-                status = if (musicUri != null) "جارٍ التسجيل مع الموسيقى..." else "جارٍ التسجيل..."
+                status = "جارٍ التسجيل..."
             } else {
                 status = "تعذر بدء التسجيل"
             }
@@ -458,12 +536,11 @@ fun AudioStudioScreen() {
 
     val uri = sourceUri
     val maxFade = maxFadeNow()
+    val previewReady = previewFile != null && previewKey == currentKey()
 
     // شاشة الكاراوكي تحل محل الشاشة الرئيسية مؤقتاً
     if (showLyrics) {
-        Column(
-            modifier = Modifier.fillMaxSize().padding(16.dp)
-        ) {
+        Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
             LyricsScreen(durationSec = durationSec, onClose = { showLyrics = false })
         }
         return
@@ -497,9 +574,7 @@ fun AudioStudioScreen() {
                         status = "فشل حفظ التسجيل"
                     }
                 } else {
-                    player?.release()
-                    player = null
-                    isPlaying = false
+                    stopPlayback()
                     micPermission.launch(Manifest.permission.RECORD_AUDIO)
                 }
             }
@@ -511,31 +586,6 @@ fun AudioStudioScreen() {
                 modifier = Modifier.weight(1f)
             ) {
                 picker.launch(arrayOf("audio/*"))
-            }
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            GradientButton(
-                text = if (musicUri == null) "موسيقى مرافقة للتسجيل" else "تغيير الموسيقى المرافقة",
-                brush = Brush.horizontalGradient(listOf(AccentGold, Color(0xFFB8860B))),
-                enabled = !isRecording,
-                modifier = Modifier.weight(1f)
-            ) {
-                musicPicker.launch(arrayOf("audio/*"))
-            }
-            if (musicUri != null) {
-                GradientButton(
-                    text = "إزالة الموسيقى",
-                    brush = Brush.horizontalGradient(listOf(Color(0xFF7F1D1D), Color(0xFFB91C1C))),
-                    enabled = !isRecording,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    musicUri = null
-                    status = "تمت إزالة الموسيقى المرافقة"
-                }
             }
         }
 
@@ -569,9 +619,7 @@ fun AudioStudioScreen() {
                 pitchAnalyzing = true
                 status = "جارٍ تحليل النغمة..."
                 scope.launch {
-                    val result = withContext(Dispatchers.IO) {
-                        analyzePitchOf(context, src, dur)
-                    }
+                    val result = withContext(Dispatchers.IO) { analyzePitchOf(context, src, dur) }
                     pitchAnalyzing = false
                     status = result ?: "تعذر تحليل النغمة، جرّب ملف WAV"
                 }
@@ -634,14 +682,12 @@ fun AudioStudioScreen() {
                     enabled = !analyzing,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    val src = uri ?: return@GradientButton
+                    val src = uri
                     val dur = durationSec
                     analyzing = true
                     status = "جارٍ تحليل الضوضاء..."
                     scope.launch {
-                        val result = withContext(Dispatchers.IO) {
-                            analyzeNoise(context, src, dur)
-                        }
+                        val result = withContext(Dispatchers.IO) { analyzeNoise(context, src, dur) }
                         analyzing = false
                         if (result == null) {
                             status = "تعذر تحليل الملف، جرّب ملف WAV"
@@ -667,24 +713,32 @@ fun AudioStudioScreen() {
                 }
             }
 
-            SectionCard(title = "المزج مع ملف من الهاتف", icon = "🎵", accent = AccentGold) {
+            SectionCard(title = "موسيقى مرافقة (تُمزج بعد التسجيل)", icon = "🎵", accent = AccentGold) {
                 GradientButton(
-                    text = if (overlayUri == null) "إضافة صوت للمزج" else "تغيير ملف المزج",
+                    text = if (musicUri == null) "اختيار موسيقى" else "تغيير الموسيقى",
                     brush = Brush.horizontalGradient(listOf(AccentGold, Color(0xFFB8860B))),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    overlayPicker.launch(arrayOf("audio/*"))
+                    musicPicker.launch(arrayOf("audio/*"))
                 }
-                if (overlayUri != null) {
-                    SliderRow("مستوى ملف المزج", "${"%.0f".format(overlayVol * 100)}%", overlayVol, 0f..1f, AccentGold) {
-                        overlayVol = it
+                if (musicUri != null) {
+                    SliderRow("مستوى الموسيقى", "${"%.0f".format(musicVol * 100)}%", musicVol, 0f..1f, AccentGold) {
+                        musicVol = it
+                    }
+                    SliderRow("تأخير الموسيقى", "${"%.1f".format(musicDelay)} ث", musicDelay, 0f..10f, AccentGold) {
+                        musicDelay = it
+                    }
+                    SliderRow("تحريك الموسيقى (تبدأ من ثانية)", "${"%.1f".format(musicOffset)} ث", musicOffset, 0f..60f, AccentGold) {
+                        musicOffset = it
                     }
                     GradientButton(
-                        text = "إزالة ملف المزج",
+                        text = "إزالة الموسيقى",
                         brush = Brush.horizontalGradient(listOf(Color(0xFF7F1D1D), Color(0xFFB91C1C))),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        overlayUri = null
+                        musicUri = null
+                        musicPcm = null
+                        musicLoading = false
                     }
                 }
             }
@@ -702,6 +756,15 @@ fun AudioStudioScreen() {
                     status = "تم حفظ المسبقة: $name"
                 }
             }
+
+            Text(
+                text = if (previewReady) "المعاينة جاهزة (لن تُعاد تعبئتها ما لم تتغير الإعدادات)"
+                else "تحتاج معاينة جديدة (ستُجهّز عند الضغط على التشغيل)",
+                color = if (previewReady) AccentCyan else Color(0xFF9FB3C8),
+                fontSize = 12.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -721,30 +784,39 @@ fun AudioStudioScreen() {
                         isPlaying = false
                         return@PlayFab
                     }
-                    player?.release()
-                    player = null
-                    status = "جارٍ تجهيز المعاينة..."
+                    if (busy || musicLoading) {
+                        status = "انتظر اكتمال التحميل"
+                        return@PlayFab
+                    }
+                    val cached = previewFile
+                    val key = currentKey()
+                    if (cached != null && previewKey == key) {
+                        startPlayback(cached)
+                        status = "تشغيل المعاينة"
+                        return@PlayFab
+                    }
 
+                    val src = uri ?: return@PlayFab
                     val s = startSec
                     val e = endSec
                     val p = buildParams()
-                    val ov = overlayUri
-                    val ovv = overlayVol
+                    val music = musicPcm
+                    val ms = currentMusic()
+                    stopPlayback()
+                    busy = true
+                    status = "جارٍ تجهيز المعاينة..."
 
                     scope.launch {
                         val file = withContext(Dispatchers.IO) {
-                            AudioExporter.renderPreview(context, uri, s, e, p, ov, ovv)
+                            buildPreview(context, src, s, e, p, music, ms)
                         }
+                        busy = false
                         if (file == null) {
                             status = "فشل تجهيز المعاينة: ${AudioExporter.lastError}"
                         } else {
-                            player = MediaPlayer().apply {
-                                setDataSource(file.absolutePath)
-                                prepare()
-                                setOnCompletionListener { isPlaying = false }
-                                start()
-                            }
-                            isPlaying = true
+                            previewFile = file
+                            previewKey = key
+                            startPlayback(file)
                             status = "تشغيل المعاينة"
                         }
                     }
@@ -755,20 +827,30 @@ fun AudioStudioScreen() {
                     brush = Brush.horizontalGradient(listOf(AccentGold, Color(0xFFB8860B))),
                     modifier = Modifier.weight(1f)
                 ) {
-                    player?.pause()
-                    isPlaying = false
+                    if (busy || musicLoading) {
+                        status = "انتظر اكتمال التحميل"
+                        return@GradientButton
+                    }
+                    val src = uri ?: return@GradientButton
+                    stopPlayback()
+                    busy = true
                     status = "جارٍ القص والحفظ..."
 
+                    val key = currentKey()
+                    val cached = if (previewKey == key) previewFile else null
                     val s = startSec
                     val e = endSec
                     val p = buildParams()
-                    val ov = overlayUri
-                    val ovv = overlayVol
+                    val music = musicPcm
+                    val ms = currentMusic()
 
                     scope.launch {
                         val path = withContext(Dispatchers.IO) {
-                            AudioExporter.trimWithFades(context, uri, s, e, p, ov, ovv)
+                            val file = cached ?: buildPreview(context, src, s, e, p, music, ms)
+                            if (file == null) null
+                            else AudioExporter.saveFileToDownloads(context, file)
                         }
+                        busy = false
                         savedUri = AudioExporter.lastSavedUri
                         status = if (path != null) {
                             "تم الحفظ في: $path"
