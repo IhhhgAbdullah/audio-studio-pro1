@@ -78,7 +78,13 @@ fun AudioStudioScreen() {
     var chorusAmt by remember { mutableFloatStateOf(0f) }
     var reverbAmt by remember { mutableFloatStateOf(0f) }
     var pitchSt by remember { mutableFloatStateOf(0f) }
+    var eqLow by remember { mutableFloatStateOf(0f) }
+    var eqMid by remember { mutableFloatStateOf(0f) }
+    var eqHigh by remember { mutableFloatStateOf(0f) }
+    var gateAmt by remember { mutableFloatStateOf(0.5f) }
     var cleanEnabled by remember { mutableStateOf(false) }
+    var overlayUri by remember { mutableStateOf<Uri?>(null) }
+    var overlayVol by remember { mutableFloatStateOf(0.5f) }
     var status by remember { mutableStateOf("اختر ملف صوت أو سجّل للبدء") }
     var player by remember { mutableStateOf<MediaPlayer?>(null) }
     var isPlaying by remember { mutableStateOf(false) }
@@ -107,10 +113,42 @@ fun AudioStudioScreen() {
         status = if (durationSec > 0f) "تم تحميل الملف" else "تعذر قراءة مدة الملف"
     }
 
+    fun maxFadeNow(): Float = max(0.1f, min(5f, (endSec - startSec) / 2f))
+
+    fun buildParams(): FxParams {
+        val maxFade = maxFadeNow()
+        return FxParams(
+            fadeInSec = fadeInSec.coerceIn(0f, maxFade),
+            fadeOutSec = fadeOutSec.coerceIn(0f, maxFade),
+            echoDelaySec = echoDelaySec,
+            echoFeedback = echoFeedback,
+            echoMix = echoMix,
+            bass = bassAmt,
+            distortion = distAmt,
+            chorus = chorusAmt,
+            reverb = reverbAmt,
+            pitchSemitones = pitchSt,
+            eqLow = eqLow,
+            eqMid = eqMid,
+            eqHigh = eqHigh,
+            clean = cleanEnabled,
+            gate = gateAmt
+        )
+    }
+
     val picker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri != null) loadSource(uri)
+    }
+
+    val overlayPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            overlayUri = uri
+            status = "تمت إضافة ملف المزج"
+        }
     }
 
     val micPermission = rememberLauncherForActivityResult(
@@ -183,7 +221,7 @@ fun AudioStudioScreen() {
                 valueRange = 0f..max(durationSec, 0.1f)
             )
 
-            val maxFade = max(0.1f, min(5f, (endSec - startSec) / 2f))
+            val maxFade = maxFadeNow()
 
             Text("تدرج الدخول (Fade In): ${"%.1f".format(fadeInSec)} ث")
             Slider(
@@ -255,8 +293,52 @@ fun AudioStudioScreen() {
                 valueRange = -12f..12f
             )
 
+            Text("الترددات المنخفضة (أقل من 250 هرتز): ${"%+.0f".format(eqLow)} dB")
+            Slider(
+                value = eqLow,
+                onValueChange = { eqLow = it },
+                valueRange = -12f..12f
+            )
+
+            Text("الترددات المتوسطة: ${"%+.0f".format(eqMid)} dB")
+            Slider(
+                value = eqMid,
+                onValueChange = { eqMid = it },
+                valueRange = -12f..12f
+            )
+
+            Text("الترددات العالية (أعلى من 3000 هرتز): ${"%+.0f".format(eqHigh)} dB")
+            Slider(
+                value = eqHigh,
+                onValueChange = { eqHigh = it },
+                valueRange = -12f..12f
+            )
+
+            Text("قوة بوابة الضوضاء (Gate): ${"%.0f".format(gateAmt * 100)}%")
+            Slider(
+                value = gateAmt,
+                onValueChange = { gateAmt = it },
+                valueRange = 0f..1f
+            )
+
             Button(onClick = { cleanEnabled = !cleanEnabled }) {
                 Text(if (cleanEnabled) "التنقية: مفعّلة" else "التنقية: متوقفة")
+            }
+
+            Button(onClick = { overlayPicker.launch(arrayOf("audio/*")) }) {
+                Text(if (overlayUri == null) "إضافة صوت من الهاتف للمزج" else "تغيير ملف المزج")
+            }
+
+            if (overlayUri != null) {
+                Text("مستوى ملف المزج: ${"%.0f".format(overlayVol * 100)}%")
+                Slider(
+                    value = overlayVol,
+                    onValueChange = { overlayVol = it },
+                    valueRange = 0f..1f
+                )
+                Button(onClick = { overlayUri = null }) {
+                    Text("إزالة ملف المزج")
+                }
             }
 
             Button(onClick = {
@@ -271,23 +353,13 @@ fun AudioStudioScreen() {
 
                 val s = startSec
                 val e = endSec
-                val p = FxParams(
-                    fadeInSec = fadeInSec.coerceIn(0f, maxFade),
-                    fadeOutSec = fadeOutSec.coerceIn(0f, maxFade),
-                    echoDelaySec = echoDelaySec,
-                    echoFeedback = echoFeedback,
-                    echoMix = echoMix,
-                    bass = bassAmt,
-                    distortion = distAmt,
-                    chorus = chorusAmt,
-                    reverb = reverbAmt,
-                    pitchSemitones = pitchSt,
-                    clean = cleanEnabled
-                )
+                val p = buildParams()
+                val ov = overlayUri
+                val ovv = overlayVol
 
                 scope.launch {
                     val file = withContext(Dispatchers.IO) {
-                        AudioExporter.renderPreview(context, uri, s, e, p)
+                        AudioExporter.renderPreview(context, uri, s, e, p, ov, ovv)
                     }
                     if (file == null) {
                         status = "فشل تجهيز المعاينة: ${AudioExporter.lastError}"
@@ -313,23 +385,13 @@ fun AudioStudioScreen() {
 
                 val s = startSec
                 val e = endSec
-                val p = FxParams(
-                    fadeInSec = fadeInSec.coerceIn(0f, maxFade),
-                    fadeOutSec = fadeOutSec.coerceIn(0f, maxFade),
-                    echoDelaySec = echoDelaySec,
-                    echoFeedback = echoFeedback,
-                    echoMix = echoMix,
-                    bass = bassAmt,
-                    distortion = distAmt,
-                    chorus = chorusAmt,
-                    reverb = reverbAmt,
-                    pitchSemitones = pitchSt,
-                    clean = cleanEnabled
-                )
+                val p = buildParams()
+                val ov = overlayUri
+                val ovv = overlayVol
 
                 scope.launch {
                     val path = withContext(Dispatchers.IO) {
-                        AudioExporter.trimWithFades(context, uri, s, e, p)
+                        AudioExporter.trimWithFades(context, uri, s, e, p, ov, ovv)
                     }
                     status = if (path != null) {
                         "تم الحفظ في: $path"
