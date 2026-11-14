@@ -22,12 +22,15 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -61,11 +64,98 @@ class MainActivity : ComponentActivity() {
                 )
             ) {
                 RgbBackground {
-                    AudioStudioScreen()
+                    AppRoot()
                 }
             }
         }
     }
+}
+
+@Composable
+fun AppRoot() {
+    var tab by remember { mutableIntStateOf(0) }
+    Column(modifier = Modifier.fillMaxSize()) {
+        Box(modifier = Modifier.weight(1f)) {
+            if (tab == 0) AudioStudioScreen() else PresetsScreen()
+        }
+        NavigationBar(containerColor = Color(0xCC0D1B2A)) {
+            NavigationBarItem(
+                selected = tab == 0,
+                onClick = { tab = 0 },
+                icon = { Text("🎚️") },
+                label = { Text("الرئيسية") }
+            )
+            NavigationBarItem(
+                selected = tab == 1,
+                onClick = { tab = 1 },
+                icon = { Text("⭐") },
+                label = { Text("المسبقات") }
+            )
+        }
+    }
+}
+
+/** صفحة المسبقات: جاهزة وخاصة. الضغط على مسبقة يطبقها في الشاشة الرئيسية. */
+@Composable
+fun PresetsScreen() {
+    val context = LocalContext.current
+    var userPresets by remember { mutableStateOf(PresetStore.loadUser(context)) }
+    var message by remember { mutableStateOf("اضغط مسبقة لتطبيقها في الشاشة الرئيسية") }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        AppHeader()
+        Text("مسبقات جاهزة", color = AccentGold, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, fontSize = 16.sp)
+        Preset.BUILT_IN.forEach { p ->
+            GradientButton(
+                text = p.name,
+                brush = Brush.horizontalGradient(listOf(AccentPurple, AccentBlue)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                PresetBus.pending = p
+                message = "تم اختيار: ${p.name}. ارجع للرئيسية لتطبيقها"
+            }
+        }
+
+        Text("مسبقاتي", color = AccentGold, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, fontSize = 16.sp)
+        if (userPresets.isEmpty()) {
+            Text("لا توجد مسبقات خاصة بعد", color = Color(0xFF9FB3C8), fontSize = 13.sp)
+        }
+        userPresets.forEachIndexed { index, p ->
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                GradientButton(
+                    text = p.name,
+                    brush = Brush.horizontalGradient(listOf(AccentCyan, AccentBlue)),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    PresetBus.pending = p
+                    message = "تم اختيار: ${p.name}. ارجع للرئيسية لتطبيقها"
+                }
+                Spacer(Modifier.width(8.dp))
+                GradientButton(
+                    text = "حذف",
+                    brush = Brush.horizontalGradient(listOf(Color(0xFF7F1D1D), Color(0xFFB91C1C))),
+                ) {
+                    val updated = userPresets.toMutableList().also { it.removeAt(index) }
+                    PresetStore.saveUser(context, updated)
+                    userPresets = updated
+                    message = "تم حذف المسبقة"
+                }
+            }
+        }
+
+        Text(message, color = Color(0xFF9FB3C8), fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+    }
+}
+
+/** ناقل بسيط لنقل المسبقة المختارة من صفحة المسبقات إلى الشاشة الرئيسية. */
+object PresetBus {
+    var pending: Preset? = null
 }
 
 @Composable
@@ -109,6 +199,29 @@ fun AudioStudioScreen() {
         }
     }
 
+    // تطبيق المسبقة المختارة من صفحة المسبقات
+    val pending = PresetBus.pending
+    if (pending != null) {
+        echoMix = pending.echoMix
+        echoDelaySec = pending.echoDelay
+        echoFeedback = pending.echoFeedback
+        bassAmt = pending.bass
+        distAmt = pending.distortion
+        chorusAmt = pending.chorus
+        reverbAmt = pending.reverb
+        pitchSt = pending.pitch
+        eqLow = pending.eqLow
+        eqMid = pending.eqMid
+        eqHigh = pending.eqHigh
+        compAmt = pending.compressor
+        doublerAmt = pending.doubler
+        enhancerAmt = pending.enhancer
+        gateAmt = pending.gate
+        cleanEnabled = pending.clean
+        status = "تم تطبيق مسبقة: ${pending.name}"
+        PresetBus.pending = null
+    }
+
     fun loadSource(uri: Uri) {
         player?.release()
         player = null
@@ -149,6 +262,26 @@ fun AudioStudioScreen() {
             gate = gateAmt
         )
     }
+
+    fun currentAsPreset(name: String) = Preset(
+        name = name,
+        echoMix = echoMix,
+        echoDelay = echoDelaySec,
+        echoFeedback = echoFeedback,
+        bass = bassAmt,
+        distortion = distAmt,
+        chorus = chorusAmt,
+        reverb = reverbAmt,
+        pitch = pitchSt,
+        eqLow = eqLow,
+        eqMid = eqMid,
+        eqHigh = eqHigh,
+        compressor = compAmt,
+        doubler = doublerAmt,
+        enhancer = enhancerAmt,
+        gate = gateAmt,
+        clean = cleanEnabled
+    )
 
     fun resetEffects() {
         fadeInSec = 0f
@@ -263,73 +396,31 @@ fun AudioStudioScreen() {
 
         if (uri != null && durationSec > 0f && !isRecording) {
             SectionCard(title = "القص", icon = "✂️", accent = AccentPink, initiallyExpanded = true) {
-                SliderRow(
-                    label = "بداية القص",
-                    valueText = "${"%.1f".format(startSec)} ث",
-                    value = startSec,
-                    range = 0f..max(durationSec, 0.1f),
-                    accent = AccentPink
-                ) {
+                SliderRow("بداية القص", "${"%.1f".format(startSec)} ث", startSec, 0f..max(durationSec, 0.1f), AccentPink) {
                     startSec = min(it, endSec)
                 }
-                SliderRow(
-                    label = "نهاية القص",
-                    valueText = "${"%.1f".format(endSec)} ث",
-                    value = endSec,
-                    range = 0f..max(durationSec, 0.1f),
-                    accent = AccentPink
-                ) {
+                SliderRow("نهاية القص", "${"%.1f".format(endSec)} ث", endSec, 0f..max(durationSec, 0.1f), AccentPink) {
                     endSec = max(it, startSec)
                 }
             }
 
             SectionCard(title = "التدرجات", icon = "📈", accent = AccentGold) {
-                SliderRow(
-                    label = "تدرج الدخول (Fade In)",
-                    valueText = "${"%.1f".format(fadeInSec)} ث",
-                    value = fadeInSec,
-                    range = 0f..maxFade,
-                    accent = AccentGold
-                ) {
+                SliderRow("تدرج الدخول (Fade In)", "${"%.1f".format(fadeInSec)} ث", fadeInSec, 0f..maxFade, AccentGold) {
                     fadeInSec = it
                 }
-                SliderRow(
-                    label = "تدرج الخروج (Fade Out)",
-                    valueText = "${"%.1f".format(fadeOutSec)} ث",
-                    value = fadeOutSec,
-                    range = 0f..maxFade,
-                    accent = AccentGold
-                ) {
+                SliderRow("تدرج الخروج (Fade Out)", "${"%.1f".format(fadeOutSec)} ث", fadeOutSec, 0f..maxFade, AccentGold) {
                     fadeOutSec = it
                 }
             }
 
             SectionCard(title = "الصدى", icon = "🔁", accent = AccentCyan) {
-                SliderRow(
-                    label = "زمن الصدى (Delay)",
-                    valueText = "${"%.2f".format(echoDelaySec)} ث",
-                    value = echoDelaySec,
-                    range = 0.05f..1f,
-                    accent = AccentCyan
-                ) {
+                SliderRow("زمن الصدى (Delay)", "${"%.2f".format(echoDelaySec)} ث", echoDelaySec, 0.05f..1f, AccentCyan) {
                     echoDelaySec = it
                 }
-                SliderRow(
-                    label = "تكرار الصدى (Feedback)",
-                    valueText = "${"%.0f".format(echoFeedback * 100)}%",
-                    value = echoFeedback,
-                    range = 0f..0.8f,
-                    accent = AccentCyan
-                ) {
+                SliderRow("تكرار الصدى (Feedback)", "${"%.0f".format(echoFeedback * 100)}%", echoFeedback, 0f..0.8f, AccentCyan) {
                     echoFeedback = it
                 }
-                SliderRow(
-                    label = "مزج الصدى (Mix)",
-                    valueText = "${"%.0f".format(echoMix * 100)}%",
-                    value = echoMix,
-                    range = 0f..1f,
-                    accent = AccentCyan
-                ) {
+                SliderRow("مزج الصدى (Mix)", "${"%.0f".format(echoMix * 100)}%", echoMix, 0f..1f, AccentCyan) {
                     echoMix = it
                 }
             }
@@ -381,6 +472,20 @@ fun AudioStudioScreen() {
                     ) {
                         overlayUri = null
                     }
+                }
+            }
+
+            SectionCard(title = "المسبقات", icon = "💾", accent = AccentCyan) {
+                GradientButton(
+                    text = "حفظ الإعدادات كمسبقة",
+                    brush = Brush.horizontalGradient(listOf(AccentCyan, AccentBlue)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    val name = "مسبقتي ${PresetStore.loadUser(context).size + 1}"
+                    val list = PresetStore.loadUser(context)
+                    list.add(currentAsPreset(name))
+                    PresetStore.saveUser(context, list)
+                    status = "تم حفظ المسبقة: $name"
                 }
             }
 
@@ -482,4 +587,4 @@ fun readDurationSec(context: Context, uri: Uri): Float {
     } finally {
         retriever.release()
     }
-}
+} 
