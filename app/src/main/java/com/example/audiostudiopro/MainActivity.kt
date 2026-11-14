@@ -64,6 +64,9 @@ fun AudioStudioScreen() {
     var endSec by remember { mutableFloatStateOf(0f) }
     var fadeInSec by remember { mutableFloatStateOf(0f) }
     var fadeOutSec by remember { mutableFloatStateOf(0f) }
+    var echoDelaySec by remember { mutableFloatStateOf(0.3f) }
+    var echoFeedback by remember { mutableFloatStateOf(0.4f) }
+    var echoMix by remember { mutableFloatStateOf(0f) }
     var status by remember { mutableStateOf("اختر ملف صوت للبدء") }
     var player by remember { mutableStateOf<MediaPlayer?>(null) }
     var isPlaying by remember { mutableStateOf(false) }
@@ -86,6 +89,7 @@ fun AudioStudioScreen() {
             endSec = durationSec
             fadeInSec = 0f
             fadeOutSec = 0f
+            echoMix = 0f
             player = createPlayer(context, uri)
             status = if (durationSec > 0f) "تم تحميل الملف" else "تعذر قراءة مدة الملف"
         }
@@ -147,6 +151,27 @@ fun AudioStudioScreen() {
                 valueRange = 0f..maxFade
             )
 
+            Text("زمن الصدى (Echo Delay): ${"%.2f".format(echoDelaySec)} ث")
+            Slider(
+                value = echoDelaySec,
+                onValueChange = { echoDelaySec = it },
+                valueRange = 0.05f..1f
+            )
+
+            Text("تكرار الصدى (Feedback): ${"%.0f".format(echoFeedback * 100)}%")
+            Slider(
+                value = echoFeedback,
+                onValueChange = { echoFeedback = it },
+                valueRange = 0f..0.8f
+            )
+
+            Text("مزج الصدى (Echo Mix): ${"%.0f".format(echoMix * 100)}%")
+            Slider(
+                value = echoMix,
+                onValueChange = { echoMix = it },
+                valueRange = 0f..1f
+            )
+
             Button(onClick = {
                 val p = player ?: return@Button
                 if (isPlaying) {
@@ -168,7 +193,8 @@ fun AudioStudioScreen() {
                 val path = AudioExporter.trimWithFades(
                     context, uri, startSec, endSec,
                     fadeInSec.coerceIn(0f, maxFade),
-                    fadeOutSec.coerceIn(0f, maxFade)
+                    fadeOutSec.coerceIn(0f, maxFade),
+                    echoDelaySec, echoFeedback, echoMix
                 )
                 status = if (path != null) {
                     "تم الحفظ في: $path"
