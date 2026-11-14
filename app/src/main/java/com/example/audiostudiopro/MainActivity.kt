@@ -37,9 +37,6 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
-import java.io.FileOutputStream
-import java.io.RandomAccessFile
 import kotlin.math.max
 import kotlin.math.min
 
@@ -76,6 +73,11 @@ fun AudioStudioScreen() {
     var echoDelaySec by remember { mutableFloatStateOf(0.3f) }
     var echoFeedback by remember { mutableFloatStateOf(0.4f) }
     var echoMix by remember { mutableFloatStateOf(0f) }
+    var bassAmt by remember { mutableFloatStateOf(0f) }
+    var distAmt by remember { mutableFloatStateOf(0f) }
+    var chorusAmt by remember { mutableFloatStateOf(0f) }
+    var reverbAmt by remember { mutableFloatStateOf(0f) }
+    var pitchSt by remember { mutableFloatStateOf(0f) }
     var cleanEnabled by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("اختر ملف صوت أو سجّل للبدء") }
     var player by remember { mutableStateOf<MediaPlayer?>(null) }
@@ -218,6 +220,41 @@ fun AudioStudioScreen() {
                 valueRange = 0f..1f
             )
 
+            Text("تعزيز الباس (Bass Boost): ${"%.0f".format(bassAmt * 100)}%")
+            Slider(
+                value = bassAmt,
+                onValueChange = { bassAmt = it },
+                valueRange = 0f..1f
+            )
+
+            Text("تشويه (Distortion): ${"%.0f".format(distAmt * 100)}%")
+            Slider(
+                value = distAmt,
+                onValueChange = { distAmt = it },
+                valueRange = 0f..1f
+            )
+
+            Text("تعدد الأصوات (Chorus): ${"%.0f".format(chorusAmt * 100)}%")
+            Slider(
+                value = chorusAmt,
+                onValueChange = { chorusAmt = it },
+                valueRange = 0f..1f
+            )
+
+            Text("صدى القاعة (Reverb): ${"%.0f".format(reverbAmt * 100)}%")
+            Slider(
+                value = reverbAmt,
+                onValueChange = { reverbAmt = it },
+                valueRange = 0f..1f
+            )
+
+            Text("النغمة (Pitch): ${"%+.0f".format(pitchSt)} نصف نغمة")
+            Slider(
+                value = pitchSt,
+                onValueChange = { pitchSt = it },
+                valueRange = -12f..12f
+            )
+
             Button(onClick = { cleanEnabled = !cleanEnabled }) {
                 Text(if (cleanEnabled) "التنقية: مفعّلة" else "التنقية: متوقفة")
             }
@@ -234,19 +271,26 @@ fun AudioStudioScreen() {
 
                 val s = startSec
                 val e = endSec
-                val fi = fadeInSec.coerceIn(0f, maxFade)
-                val fo = fadeOutSec.coerceIn(0f, maxFade)
-                val ed = echoDelaySec
-                val ef = echoFeedback
-                val em = echoMix
-                val cl = cleanEnabled
+                val p = FxParams(
+                    fadeInSec = fadeInSec.coerceIn(0f, maxFade),
+                    fadeOutSec = fadeOutSec.coerceIn(0f, maxFade),
+                    echoDelaySec = echoDelaySec,
+                    echoFeedback = echoFeedback,
+                    echoMix = echoMix,
+                    bass = bassAmt,
+                    distortion = distAmt,
+                    chorus = chorusAmt,
+                    reverb = reverbAmt,
+                    pitchSemitones = pitchSt,
+                    clean = cleanEnabled
+                )
 
                 scope.launch {
                     val file = withContext(Dispatchers.IO) {
-                        renderPreview(context, uri, s, e, fi, fo, ed, ef, em, cl)
+                        AudioExporter.renderPreview(context, uri, s, e, p)
                     }
                     if (file == null) {
-                        status = "فشل تجهيز المعاينة"
+                        status = "فشل تجهيز المعاينة: ${AudioExporter.lastError}"
                     } else {
                         player = MediaPlayer().apply {
                             setDataSource(file.absolutePath)
@@ -266,20 +310,26 @@ fun AudioStudioScreen() {
                 player?.pause()
                 isPlaying = false
                 status = "جارٍ القص والحفظ..."
+
                 val s = startSec
                 val e = endSec
-                val fi = fadeInSec.coerceIn(0f, maxFade)
-                val fo = fadeOutSec.coerceIn(0f, maxFade)
-                val ed = echoDelaySec
-                val ef = echoFeedback
-                val em = echoMix
-                val cl = cleanEnabled
+                val p = FxParams(
+                    fadeInSec = fadeInSec.coerceIn(0f, maxFade),
+                    fadeOutSec = fadeOutSec.coerceIn(0f, maxFade),
+                    echoDelaySec = echoDelaySec,
+                    echoFeedback = echoFeedback,
+                    echoMix = echoMix,
+                    bass = bassAmt,
+                    distortion = distAmt,
+                    chorus = chorusAmt,
+                    reverb = reverbAmt,
+                    pitchSemitones = pitchSt,
+                    clean = cleanEnabled
+                )
 
                 scope.launch {
                     val path = withContext(Dispatchers.IO) {
-                        AudioExporter.trimWithFades(
-                            context, uri, s, e, fi, fo, ed, ef, em, cl
-                        )
+                        AudioExporter.trimWithFades(context, uri, s, e, p)
                     }
                     status = if (path != null) {
                         "تم الحفظ في: $path"
@@ -293,70 +343,6 @@ fun AudioStudioScreen() {
         }
 
         Text(status)
-    }
-}
-
-/**
- * يجهّز ملف معاينة مؤقتاً بنفس خطوات الحفظ: قص، ثم تنقية، ثم Echo، ثم تدرجات.
- */
-fun renderPreview(
-    context: Context,
-    uri: Uri,
-    startSec: Float,
-    endSec: Float,
-    fadeInSec: Float,
-    fadeOutSec: Float,
-    echoDelaySec: Float,
-    echoFeedback: Float,
-    echoMix: Float,
-    clean: Boolean
-): File? {
-    val trimmedPath = WavTrimmer.trim(context, uri, startSec, endSec)
-        ?: Mp3Trimmer.trim(context, uri, startSec, endSec)
-        ?: return null
-
-    val trimmed = File(trimmedPath)
-    return try {
-        val header = WavTrimmer.readWavHeader(trimmed) ?: return null
-
-        val data = ByteArray(header.dataSize)
-        RandomAccessFile(trimmed, "r").use { raf ->
-            raf.seek(header.dataOffset)
-            raf.readFully(data)
-        }
-
-        var processed = data
-        if (header.bitsPerSample == 16) {
-            if (clean) {
-                processed = AudioCleaner.clean(
-                    processed, header.channels, header.sampleRate, 0.5f
-                )
-            }
-            if (echoMix > 0f && echoDelaySec > 0f) {
-                processed = AudioEffects.applyEcho(
-                    processed, header.channels, header.sampleRate,
-                    echoDelaySec, echoFeedback, echoMix
-                )
-            }
-            if (fadeInSec > 0f || fadeOutSec > 0f) {
-                processed = AudioEffects.applyFades(
-                    processed, header.channels, header.sampleRate, fadeInSec, fadeOutSec
-                )
-            }
-        }
-
-        val out = File(context.cacheDir, "preview.wav")
-        FileOutputStream(out).use { o ->
-            WavTrimmer.writeWavHeader(
-                o, header.sampleRate, header.channels, header.bitsPerSample, processed.size
-            )
-            o.write(processed)
-        }
-        out
-    } catch (e: Exception) {
-        null
-    } finally {
-        trimmed.delete()
     }
 }
 
