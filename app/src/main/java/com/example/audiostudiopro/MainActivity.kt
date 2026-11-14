@@ -227,6 +227,7 @@ fun AudioStudioScreen() {
     var gateAmt by remember { mutableFloatStateOf(0.5f) }
     var cleanEnabled by remember { mutableStateOf(false) }
     var analyzing by remember { mutableStateOf(false) }
+    var showLyrics by remember { mutableStateOf(false) }
     var overlayUri by remember { mutableStateOf<Uri?>(null) }
     var overlayVol by remember { mutableFloatStateOf(0.5f) }
     var status by remember { mutableStateOf("اختر ملف صوت أو سجّل للبدء") }
@@ -261,6 +262,7 @@ fun AudioStudioScreen() {
             compAmt = pending.compressor
             doublerAmt = pending.doubler
             enhancerAmt = pending.enhancer
+            speechEqAmt = pending.speechEq
             gateAmt = pending.gate
             cleanEnabled = pending.clean
             status = if (sourceUri == null) {
@@ -332,6 +334,7 @@ fun AudioStudioScreen() {
         compressor = compAmt,
         doubler = doublerAmt,
         enhancer = enhancerAmt,
+        speechEq = speechEqAmt,
         gate = gateAmt,
         clean = cleanEnabled
     )
@@ -410,6 +413,16 @@ fun AudioStudioScreen() {
     val uri = sourceUri
     val maxFade = maxFadeNow()
 
+    // شاشة الكاراوكي تحل محل الشاشة الرئيسية مؤقتاً
+    if (showLyrics) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(16.dp)
+        ) {
+            LyricsScreen(durationSec = durationSec, onClose = { showLyrics = false })
+        }
+        return
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -466,6 +479,14 @@ fun AudioStudioScreen() {
         }
 
         if (uri != null && durationSec > 0f && !isRecording) {
+            GradientButton(
+                text = "كاراوكي (كلمات الأغنية)",
+                brush = Brush.horizontalGradient(listOf(AccentPink, AccentPurple)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                showLyrics = true
+            }
+
             SectionCard(title = "القص", icon = "✂️", accent = AccentPink, initiallyExpanded = true) {
                 SliderRow("بداية القص", "${"%.1f".format(startSec)} ث", startSec, 0f..max(durationSec, 0.1f), AccentPink) {
                     startSec = min(it, endSec)
