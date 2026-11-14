@@ -18,9 +18,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Button
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,12 +40,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /**
- * شاشة كاراوكي: تُلصق الكلمات يدوياً، ثم تتحرك للأعلى بسرعة ثابتة على مدة الصوت.
+ * شاشة كاراوكي: تُلصق الكلمات، ثم تتحرك للأعلى بسرعة يحددها المستخدم.
+ * المدة الافتراضية للتمرير = مدة الصوت، ويمكن تعديلها بالمؤشر.
  */
 @Composable
 fun LyricsScreen(durationSec: Float, onClose: () -> Unit) {
     var lyrics by remember { mutableStateOf("") }
     var editing by remember { mutableStateOf(true) }
+    var scrollSec by remember { mutableFloatStateOf(durationSec.coerceAtLeast(10f)) }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp),
@@ -70,7 +74,13 @@ fun LyricsScreen(durationSec: Float, onClose: () -> Unit) {
                 Button(onClick = onClose) { Text("رجوع") }
             }
         } else {
-            KaraokeScroll(lyrics = lyrics, durationSec = durationSec)
+            Text("مدة التمرير: ${"%.0f".format(scrollSec)} ثانية", color = Color.White)
+            Slider(
+                value = scrollSec,
+                onValueChange = { scrollSec = it },
+                valueRange = 10f..300f
+            )
+            KaraokeScroll(lyrics = lyrics, scrollSec = scrollSec)
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Button(onClick = { editing = true }) { Text("تعديل الكلمات") }
                 Button(onClick = onClose) { Text("رجوع") }
@@ -80,8 +90,8 @@ fun LyricsScreen(durationSec: Float, onClose: () -> Unit) {
 }
 
 @Composable
-private fun KaraokeScroll(lyrics: String, durationSec: Float) {
-    val durationMs = (durationSec * 1000f).toInt().coerceAtLeast(1000)
+private fun KaraokeScroll(lyrics: String, scrollSec: Float) {
+    val durationMs = (scrollSec * 1000f).toInt().coerceAtLeast(10000)
     val transition = rememberInfiniteTransition(label = "karaoke")
     val progress by transition.animateFloat(
         initialValue = 0f,
@@ -98,12 +108,14 @@ private fun KaraokeScroll(lyrics: String, durationSec: Float) {
 
     Box(
         modifier = Modifier
-            .fillMaxSize()
+            .fillMaxWidth()
+            .height(380.dp)
             .clip(RoundedCornerShape(16.dp))
             .background(Color(0x66101C2E))
             .onSizeChanged { viewportPx = it.height },
         contentAlignment = Alignment.TopCenter
     ) {
+        // المسافة الكلية: من أسفل الشاشة حتى يخرج آخر سطر من الأعلى
         val travel = (textPx + viewportPx).coerceAtLeast(1)
         val shiftPx = viewportPx - progress * travel
         Column(
