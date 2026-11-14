@@ -228,6 +228,29 @@ fun analyzePitchOf(context: Context, uri: Uri, durationSec: Float): String? {
     }
 }
 
+/** يحسب منحنى النغمة لملف محمّل ويعيد نصه للعرض. */
+fun pitchCurveOf(context: Context, uri: Uri, durationSec: Float, scale: ScaleChoice): String? {
+    val path = WavTrimmer.trim(context, uri, 0f, durationSec)
+        ?: Mp3Trimmer.trim(context, uri, 0f, durationSec)
+        ?: return null
+    val f = File(path)
+    return try {
+        val h = WavTrimmer.readWavHeader(f) ?: return null
+        if (h.bitsPerSample != 16) return null
+        val data = ByteArray(h.dataSize)
+        RandomAccessFile(f, "r").use { raf ->
+            raf.seek(h.dataOffset)
+            raf.readFully(data)
+        }
+        val points = PitchCurve.compute(data, h.channels, h.sampleRate)
+        "السلم: ${scale.label()}\n" + PitchCurve.toText(points)
+    } catch (e: Exception) {
+        null
+    } finally {
+        f.delete()
+    }
+}
+
 /** يمزج الموسيقى مع ملف WAV ويكتب الناتج في ملف جديد. */
 fun mixMusicFile(context: Context, wav: File, music: OverlayPcm, ms: MusicSettings): File? {
     return try {
@@ -298,6 +321,10 @@ fun AudioStudioScreen() {
     var analyzing by remember { mutableStateOf(false) }
     var pitchAnalyzing by remember { mutableStateOf(false) }
     var showLyrics by remember { mutableStateOf(false) }
+
+    var scaleType by remember { mutableStateOf(ScaleType.MAJOR) }
+    var scaleRoot by remember { mutableIntStateOf(0) }
+    var pitchCurveText by remember { mutableStateOf<String?>(null) }
 
     var musicUri by remember { mutableStateOf<Uri?>(null) }
     var musicPcm by remember { mutableStateOf<OverlayPcm?>(null) }
@@ -380,6 +407,7 @@ fun AudioStudioScreen() {
         stopPlayback()
         previewFile = null
         previewKey = null
+        pitchCurveText = null
         sourceUri = uri
         durationSec = readDurationSec(context, uri)
         startSec = 0f
@@ -546,6 +574,8 @@ fun AudioStudioScreen() {
         return
     }
 
+    val currentScale = ScaleChoice(scaleType, scaleRoot)
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -623,6 +653,80 @@ fun AudioStudioScreen() {
                     pitchAnalyzing = false
                     status = result ?: "تعذر تحليل النغمة، جرّب ملف WAV"
                 }
+            }
+
+            SectionCard(title = "منحنى النغمة وتصحيحها", icon = "🎼", accent = AccentPurple) {
+                Text(
+                    text = "السلم المختار: ${currentScale.label()}",
+                    color = AccentGold,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp
+                )
+                Text("نوع السلم", color = Color.White, fontSize = 13.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ScaleType.values().forEach { t ->
+                        GradientButton(
+                            text = t.label,
+                            brush = Brush.horizontalGradient(
+                                if (scaleType == t) listOf(AccentPurple, AccentPink)
+                                else listOf(Color(0xFF334155), Color(0xFF475569))
+                            ),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            scaleType = t
+                            pitchCurveText = null
+                        }
+                    }
+                }
+                if (scaleType != ScaleType.CHROMATIC) {
+                    Text("الجذر", color = Color.White, fontSize = 13.sp)
+                    val roots = (0 until 12).toList()
+                    roots.chunked(6).forEach { row ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            row.forEach { r ->
+                                GradientButton(
+                                    text = PitchCorrect.NOTE_NAMES[r],
+                                    brush = Brush.horizontalGradient(
+                                        if (scaleRoot == r) listOf(AccentGold, Color(0xFFB8860B))
+                                        else listOf(Color(0xFF334155), Color(0xFF475569))
+                                    ),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    scaleRoot = r
+                                    pitchCurveText = null
+                                }
+                            }
+                        }
+                    }
+                }
+                GradientButton(
+                    text = "عرض منحنى النغمة",
+                    brush = Brush.horizontalGradient(listOf(AccentCyan, AccentBlue)),
+                    enabled = !pitchAnalyzing,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    val src = uri
+                    val dur = durationSec
+                    val sc = currentScale
+                    pitchAnalyzing = true
+                    status = "جارٍ حساب منحنى النغمة..."
+                    scope.launch {
+                        val text = withContext(Dispatchers.IO) {
+                            pitchCurveOf(context, src, dur, sc)
+                        }
+                        pitchAnalyzing = false
+                        pitchCurveText = text
+                        status = if (text == null) "تعذر حساب منحنى النغمة" else "تم حساب منحنى النغمة"
+                    }
+                }
+                pitchCurveText?.let { txt ->
+                    Text(txt, color = Color(0xFFF5E6B8), fontSize = 12.sp)
+                }
+                Text(
+                    "ملاحظة: هذه الخطوة تعرض المنحنى فقط، ولا تعدّل الصوت بعد.",
+                    color = Color(0xFF9FB3C8),
+                    fontSize = 11.sp
+                )
             }
 
             SectionCard(title = "القص", icon = "✂️", accent = AccentPink, initiallyExpanded = true) {
@@ -894,4 +998,4 @@ fun readDurationSec(context: Context, uri: Uri): Float {
     } finally {
         retriever.release()
     }
-}
+} 
