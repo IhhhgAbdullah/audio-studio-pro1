@@ -211,6 +211,10 @@ fun AudioStudioScreen() {
             Text(if (isRecording) "إيقاف التسجيل" else "تسجيل من الميكروفون")
         }
 
+        if (isRecording) {
+            RecordingCircle(recorder)
+        }
+
         val uri = sourceUri
         if (uri != null && durationSec > 0f && !isRecording) {
             Text("المدة: ${"%.2f".format(durationSec)} ثانية")
