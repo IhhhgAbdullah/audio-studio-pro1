@@ -25,43 +25,13 @@ object AudioExporter {
         val bits: Int
     )
 
-    private fun loadOverlay(context: Context, uri: Uri, volume: Float): OverlayPcm {
-        val path = WavTrimmer.trim(context, uri, 0f, 100000f)
-            ?: Mp3Trimmer.trim(context, uri, 0f, 100000f)
-            ?: throw IllegalStateException("تعذر قراءة ملف المزج")
-        val f = File(path)
-        try {
-            val h = WavTrimmer.readWavHeader(f)
-                ?: throw IllegalStateException("ترويسة ملف المزج غير صالحة")
-            if (h.bitsPerSample != 16) {
-                throw IllegalStateException("ملف المزج يجب أن يكون 16-bit")
-            }
-            val data = ByteArray(h.dataSize)
-            RandomAccessFile(f, "r").use { raf ->
-                raf.seek(h.dataOffset)
-                raf.readFully(data)
-            }
-            val n = data.size / 2
-            val samples = FloatArray(n) { i ->
-                ((data[i * 2].toInt() and 0xff) or (data[i * 2 + 1].toInt() shl 8))
-                    .toShort().toFloat()
-            }
-            return OverlayPcm(samples, h.sampleRate, h.channels, volume)
-        } finally {
-            f.delete()
-        }
-    }
-
+    /** يقص المقطع ثم يطبّق المؤثرات. */
     private fun render(
         context: Context,
         uri: Uri,
         startSec: Float,
         endSec: Float,
-        p: FxParams,
-        overlayUri: Uri?,
-        overlayVolume: Float,
-        introUri: Uri?,
-        introVolume: Float
+        p: FxParams
     ): Rendered {
         val trimmedPath = WavTrimmer.trim(context, uri, startSec, endSec)
             ?: Mp3Trimmer.trim(context, uri, startSec, endSec)
@@ -78,86 +48,46 @@ object AudioExporter {
                 raf.readFully(data)
             }
 
-            val full = if (overlayUri != null) {
-                p.copy(overlay = loadOverlay(context, overlayUri, overlayVolume))
-            } else {
-                p
-            }
-
-            var bytes = if (header.bitsPerSample == 16) {
-                Effects.process(data, header.channels, header.sampleRate, full)
+            val bytes = if (header.bitsPerSample == 16) {
+                Effects.process(data, header.channels, header.sampleRate, p)
             } else {
                 data
             }
-
-            // اللحن يُلحق بعد المؤثرات، فلا يتأثر بها
-            if (introUri != null && header.bitsPerSample == 16) {
-                val intro = IntroTrack.load(context, introUri, introVolume)
-                bytes = IntroTrack.prepend(bytes, header.channels, header.sampleRate, intro)
-            }
-
             return Rendered(bytes, header.sampleRate, header.channels, header.bitsPerSample)
         } finally {
             trimmed.delete()
         }
     }
 
-    fun trimWithFades(
-        context: Context,
-        uri: Uri,
-        startSec: Float,
-        endSec: Float,
-        p: FxParams,
-        overlayUri: Uri?,
-        overlayVolume: Float,
-        introUri: Uri? = null,
-        introVolume: Float = 1f
-    ): String? {
-        lastError = null
-        lastSavedUri = null
-        return try {
-            val r = render(
-                context, uri, startSec, endSec, p,
-                overlayUri, overlayVolume, introUri, introVolume
-            )
-            val outTemp = File(context.cacheDir, "export.wav")
-            FileOutputStream(outTemp).use { out ->
-                WavTrimmer.writeWavHeader(out, r.sampleRate, r.channels, r.bits, r.bytes.size)
-                out.write(r.bytes)
-            }
-            val name = "AudioStudioPro_${System.currentTimeMillis()}.wav"
-            val saved = saveToDownloads(context, outTemp, name)
-            outTemp.delete()
-            saved
-        } catch (e: Throwable) {
-            lastError = "${e.javaClass.simpleName}: ${e.message ?: "بدون تفاصيل"}"
-            null
-        }
-    }
-
+    /** يجهّز ملف WAV للمعاينة في مجلد الكاش، ويعيد الملف أو null عند الفشل. */
     fun renderPreview(
         context: Context,
         uri: Uri,
         startSec: Float,
         endSec: Float,
-        p: FxParams,
-        overlayUri: Uri?,
-        overlayVolume: Float,
-        introUri: Uri? = null,
-        introVolume: Float = 1f
+        p: FxParams
     ): File? {
         lastError = null
         return try {
-            val r = render(
-                context, uri, startSec, endSec, p,
-                overlayUri, overlayVolume, introUri, introVolume
-            )
+            val r = render(context, uri, startSec, endSec, p)
             val out = File(context.cacheDir, "preview.wav")
             FileOutputStream(out).use { o ->
                 WavTrimmer.writeWavHeader(o, r.sampleRate, r.channels, r.bits, r.bytes.size)
                 o.write(r.bytes)
             }
             out
+        } catch (e: Throwable) {
+            lastError = "${e.javaClass.simpleName}: ${e.message ?: "بدون تفاصيل"}"
+            null
+        }
+    }
+
+    /** يحفظ ملف WAV جاهزاً في Downloads/AudioStudioPro، ويعيد المسار المعروض أو null. */
+    fun saveFileToDownloads(context: Context, file: File): String? {
+        lastError = null
+        lastSavedUri = null
+        return try {
+            saveToDownloads(context, file, "AudioStudioPro_${System.currentTimeMillis()}.wav")
         } catch (e: Throwable) {
             lastError = "${e.javaClass.simpleName}: ${e.message ?: "بدون تفاصيل"}"
             null
