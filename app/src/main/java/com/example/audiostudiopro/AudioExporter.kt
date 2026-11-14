@@ -22,13 +22,43 @@ object AudioExporter {
         val bits: Int
     )
 
+    /** يحمّل ملف الصوت الإضافي كاملاً ويحوله إلى عينات float. */
+    private fun loadOverlay(context: Context, uri: Uri, volume: Float): OverlayPcm {
+        val path = WavTrimmer.trim(context, uri, 0f, 100000f)
+            ?: Mp3Trimmer.trim(context, uri, 0f, 100000f)
+            ?: throw IllegalStateException("تعذر قراءة ملف المزج")
+        val f = File(path)
+        try {
+            val h = WavTrimmer.readWavHeader(f)
+                ?: throw IllegalStateException("ترويسة ملف المزج غير صالحة")
+            if (h.bitsPerSample != 16) {
+                throw IllegalStateException("ملف المزج يجب أن يكون 16-bit")
+            }
+            val data = ByteArray(h.dataSize)
+            RandomAccessFile(f, "r").use { raf ->
+                raf.seek(h.dataOffset)
+                raf.readFully(data)
+            }
+            val n = data.size / 2
+            val samples = FloatArray(n) { i ->
+                ((data[i * 2].toInt() and 0xff) or (data[i * 2 + 1].toInt() shl 8))
+                    .toShort().toFloat()
+            }
+            return OverlayPcm(samples, h.sampleRate, h.channels, volume)
+        } finally {
+            f.delete()
+        }
+    }
+
     /** يقص المقطع ثم يطبّق المؤثرات. يُستخدم للمعاينة والحفظ معاً. */
     private fun render(
         context: Context,
         uri: Uri,
         startSec: Float,
         endSec: Float,
-        p: FxParams
+        p: FxParams,
+        overlayUri: Uri?,
+        overlayVolume: Float
     ): Rendered {
         val trimmedPath = WavTrimmer.trim(context, uri, startSec, endSec)
             ?: Mp3Trimmer.trim(context, uri, startSec, endSec)
@@ -45,8 +75,14 @@ object AudioExporter {
                 raf.readFully(data)
             }
 
+            val full = if (overlayUri != null) {
+                p.copy(overlay = loadOverlay(context, overlayUri, overlayVolume))
+            } else {
+                p
+            }
+
             val bytes = if (header.bitsPerSample == 16) {
-                Effects.process(data, header.channels, header.sampleRate, p)
+                Effects.process(data, header.channels, header.sampleRate, full)
             } else {
                 data
             }
@@ -61,11 +97,13 @@ object AudioExporter {
         uri: Uri,
         startSec: Float,
         endSec: Float,
-        p: FxParams
+        p: FxParams,
+        overlayUri: Uri?,
+        overlayVolume: Float
     ): String? {
         lastError = null
         return try {
-            val r = render(context, uri, startSec, endSec, p)
+            val r = render(context, uri, startSec, endSec, p, overlayUri, overlayVolume)
             val outTemp = File(context.cacheDir, "export.wav")
             FileOutputStream(outTemp).use { out ->
                 WavTrimmer.writeWavHeader(out, r.sampleRate, r.channels, r.bits, r.bytes.size)
@@ -86,11 +124,13 @@ object AudioExporter {
         uri: Uri,
         startSec: Float,
         endSec: Float,
-        p: FxParams
+        p: FxParams,
+        overlayUri: Uri?,
+        overlayVolume: Float
     ): File? {
         lastError = null
         return try {
-            val r = render(context, uri, startSec, endSec, p)
+            val r = render(context, uri, startSec, endSec, p, overlayUri, overlayVolume)
             val out = File(context.cacheDir, "preview.wav")
             FileOutputStream(out).use { o ->
                 WavTrimmer.writeWavHeader(o, r.sampleRate, r.channels, r.bits, r.bytes.size)
