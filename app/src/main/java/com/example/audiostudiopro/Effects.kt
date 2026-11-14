@@ -164,9 +164,12 @@ object Effects {
             applyReverb(buf, channels, sampleRate, total, p.reverb.coerceIn(0f, 1f))
         }
 
-        // 10) Echo
+        // 10) Echo احترافي (Ping-Pong مع تصفية التغذية الراجعة)
         if (p.echoMix > 0f && p.echoFeedback > 0.01f) {
-            applyEcho(buf, channels, sampleRate, total, p)
+            ProEcho.apply(
+                buf, channels, sampleRate, total,
+                p.echoDelaySec, p.echoFeedback, p.echoMix
+            )
         }
 
         // 11) مزج صوت من الهاتف
@@ -327,25 +330,6 @@ object Effects {
         }
     }
 
-    private fun applyEcho(buf: FloatArray, channels: Int, sampleRate: Int, total: Int, p: FxParams) {
-        val fb = p.echoFeedback.coerceIn(0f, 0.85f)
-        val mix = p.echoMix.coerceIn(0f, 1f)
-        val dl = max(1, (p.echoDelaySec * sampleRate).toInt())
-        val src = buf.copyOf()
-        for (c in 0 until channels) {
-            val ring = FloatArray(dl)
-            var pos = 0
-            for (f in 0 until total) {
-                val i = f * channels + c
-                val echo = ring[pos]
-                val y = (src[i] + echo * fb).coerceIn(-32768f, 32767f)
-                ring[pos] = y
-                pos = (pos + 1) % dl
-                buf[i] = src[i] * (1f - mix) + y * mix
-            }
-        }
-    }
-
     private fun mixOverlay(buf: FloatArray, channels: Int, sampleRate: Int, total: Int, ov: OverlayPcm) {
         val ovFrames = ov.samples.size / ov.channels
         if (ovFrames == 0) return
@@ -359,4 +343,4 @@ object Effects {
             }
         }
     }
-}
+} 
