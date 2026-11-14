@@ -1,12 +1,21 @@
 package com.example.audiostudiopro
 
+import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.PI
+import kotlin.math.pow
 import kotlin.math.sin
+
+/** صوت إضافي يُمزج مع المقطع. عيناته بمقياس 16-bit كما في المقطع الأصلي. */
+class OverlayPcm(
+    val samples: FloatArray,
+    val sampleRate: Int,
+    val channels: Int,
+    val volume: Float
+)
 
 data class FxParams(
     val fadeInSec: Float = 0f,
@@ -19,7 +28,12 @@ data class FxParams(
     val chorus: Float = 0f,
     val reverb: Float = 0f,
     val pitchSemitones: Float = 0f,
-    val clean: Boolean = false
+    val eqLow: Float = 0f,
+    val eqMid: Float = 0f,
+    val eqHigh: Float = 0f,
+    val clean: Boolean = false,
+    val gate: Float = 0.5f,
+    val overlay: OverlayPcm? = null
 )
 
 object Effects {
@@ -28,12 +42,11 @@ object Effects {
     fun process(data: ByteArray, channels: Int, sampleRate: Int, p: FxParams): ByteArray {
         var bytes = data
         if (p.clean) {
-            bytes = AudioCleaner.clean(bytes, channels, sampleRate, 0.5f)
+            bytes = AudioCleaner.clean(bytes, channels, sampleRate, p.gate)
         }
         val inFrames = bytes.size / (2 * channels)
         if (inFrames == 0) return bytes
 
-        // تحويل إلى float
         var x = FloatArray(inFrames * channels)
         for (i in x.indices) {
             val idx = i * 2
@@ -41,7 +54,7 @@ object Effects {
                 .toShort().toFloat()
         }
 
-        // 1) Pitch: إعادة أخذ العينات تغيّر النغمة والسرعة معاً
+        // 1) Pitch
         var frames = inFrames
         if (abs(p.pitchSemitones) > 0.01f) {
             val ratio = 2f.pow(p.pitchSemitones / 12f)
@@ -62,7 +75,6 @@ object Effects {
             frames = newFrames
         }
 
-        // حساب ذيل الصدى والصدى الصناعي
         val echoTail = if (p.echoMix > 0f && p.echoFeedback > 0.01f) {
             val fb = p.echoFeedback.coerceIn(0f, 0.85f)
             val repeats = ln(0.001f) / ln(fb)
@@ -78,7 +90,12 @@ object Effects {
         val buf = FloatArray(total * channels)
         System.arraycopy(x, 0, buf, 0, x.size)
 
-        // 2) Bass Boost: نضيف نسخة منخفضة التردد من الصوت
+        // 2) Equalizer ثلاثي النطاق
+        if (p.eqLow != 0f || p.eqMid != 0f || p.eqHigh != 0f) {
+            applyEq3(buf, channels, sampleRate, p)
+        }
+
+        // 3) Bass Boost
         if (p.bass > 0f) {
             val a = 1f - exp(-2f * PI.toFloat() * 150f / sampleRate)
             for (c in 0 until channels) {
@@ -91,7 +108,7 @@ object Effects {
             }
         }
 
-        // 3) Distortion: تشويه ناعم بالمزج مع الصوت الأصلي
+        // 4) Distortion
         if (p.distortion > 0f) {
             val d = p.distortion.coerceIn(0f, 1f)
             val k = 1f + 3f * d
@@ -102,7 +119,7 @@ object Effects {
             }
         }
 
-        // 4) Chorus: تأخير متغير بموجة جيبية بطيئة
+        // 5) Chorus
         if (p.chorus > 0f) {
             val amount = p.chorus.coerceIn(0f, 1f)
             val src = buf.copyOf()
@@ -128,7 +145,7 @@ object Effects {
             }
         }
 
-        // 5) Reverb: أربعة مرشحات تغذية راجعة بتأخيرات متداخلة
+        // 6) Reverb
         if (p.reverb > 0f) {
             val r = p.reverb.coerceIn(0f, 1f)
             val fb = 0.6f + 0.25f * r
@@ -159,7 +176,7 @@ object Effects {
             }
         }
 
-        // 6) Echo: حلقة تأخير مع تغذية راجعة ومزج
+        // 7) Echo
         if (p.echoMix > 0f && p.echoFeedback > 0.01f) {
             val fb = p.echoFeedback.coerceIn(0f, 0.85f)
             val mix = p.echoMix.coerceIn(0f, 1f)
@@ -179,7 +196,10 @@ object Effects {
             }
         }
 
-        // 7) Fade In / Fade Out
+        // 8) مزج صوت من الهاتف
+        p.overlay?.let { ov -> mixOverlay(buf, channels, sampleRate, total, ov) }
+
+        // 9) Fade In / Fade Out على المزيج النهائي
         if (p.fadeInSec > 0f || p.fadeOutSec > 0f) {
             val fi = (p.fadeInSec * sampleRate).toInt().coerceIn(0, total)
             val fo = (p.fadeOutSec * sampleRate).toInt().coerceIn(0, total)
@@ -196,7 +216,6 @@ object Effects {
             }
         }
 
-        // تحويل إلى 16-bit مع قص القيم الزائدة
         val out = ByteArray(total * channels * 2)
         for (i in buf.indices) {
             val v = buf[i].toInt().coerceIn(-32768, 32767)
@@ -204,5 +223,55 @@ object Effects {
             out[i * 2 + 1] = (v shr 8).toByte()
         }
         return out
+    }
+
+    /**
+     * Equalizer ثلاثي النطاق بتقسيم الترددات:
+     * منخفض = مرشح تمرير منخفض عند 250 هرتز،
+     * عالٍ = الباقي فوق مرشح تمرير منخفض عند 3000 هرتز،
+     * متوسط = الباقي بين النطاقين.
+     */
+    private fun applyEq3(buf: FloatArray, channels: Int, sampleRate: Int, p: FxParams) {
+        val gL = 10f.pow(p.eqLow / 20f)
+        val gM = 10f.pow(p.eqMid / 20f)
+        val gH = 10f.pow(p.eqHigh / 20f)
+        val frames = buf.size / channels
+        val aL = 1f - exp(-2f * PI.toFloat() * 250f / sampleRate)
+        val aH = 1f - exp(-2f * PI.toFloat() * 3000f / sampleRate)
+        for (c in 0 until channels) {
+            var lp1 = 0f
+            var lp2 = 0f
+            for (f in 0 until frames) {
+                val i = f * channels + c
+                val x = buf[i]
+                lp1 += aL * (x - lp1)
+                lp2 += aH * (x - lp2)
+                val low = lp1
+                val high = x - lp2
+                val mid = x - low - high
+                buf[i] = low * gL + mid * gM + high * gH
+            }
+        }
+    }
+
+    /** يمزج الصوت الإضافي مع المقطع، مع تعديل السرعة والقنوات إن اختلفت عن المقطع. */
+    private fun mixOverlay(
+        buf: FloatArray,
+        channels: Int,
+        sampleRate: Int,
+        total: Int,
+        ov: OverlayPcm
+    ) {
+        val ovFrames = ov.samples.size / ov.channels
+        if (ovFrames == 0) return
+        val ratio = ov.sampleRate.toFloat() / sampleRate
+        for (f in 0 until total) {
+            val pos = (f * ratio).toInt()
+            if (pos >= ovFrames) break
+            for (c in 0 until channels) {
+                val sc = min(c, ov.channels - 1)
+                buf[f * channels + c] += ov.samples[pos * ov.channels + sc] * ov.volume
+            }
+        }
     }
 }
