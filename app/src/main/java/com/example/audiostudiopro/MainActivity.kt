@@ -2,6 +2,7 @@ package com.example.audiostudiopro
 
 import android.content.Context
 import android.media.MediaMetadataRetriever
+import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -18,6 +19,8 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -27,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import kotlin.math.max
 import kotlin.math.min
 
@@ -49,16 +53,39 @@ fun AudioStudioScreen() {
     var startSec by remember { mutableFloatStateOf(0f) }
     var endSec by remember { mutableFloatStateOf(0f) }
     var status by remember { mutableStateOf("اختر ملف صوت للبدء") }
+    var player by remember { mutableStateOf<MediaPlayer?>(null) }
+    var isPlaying by remember { mutableStateOf(false) }
+
+    DisposableEffect(Unit) {
+        onDispose { player?.release() }
+    }
 
     val picker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri != null) {
+            player?.release()
+            player = null
+            isPlaying = false
+
             sourceUri = uri
             durationSec = readDurationSec(context, uri)
             startSec = 0f
             endSec = durationSec
+            player = createPlayer(context, uri)
             status = if (durationSec > 0f) "تم تحميل الملف" else "تعذر قراءة مدة الملف"
+        }
+    }
+
+    // مراقبة التشغيل وإيقافه عند الوصول إلى نهاية المقطع
+    LaunchedEffect(isPlaying) {
+        while (isPlaying) {
+            val p = player
+            if (p == null || !p.isPlaying || p.currentPosition >= (endSec * 1000).toInt()) {
+                p?.pause()
+                isPlaying = false
+            }
+            delay(50)
         }
     }
 
@@ -92,6 +119,22 @@ fun AudioStudioScreen() {
             )
 
             Button(onClick = {
+                val p = player ?: return@Button
+                if (isPlaying) {
+                    p.pause()
+                    isPlaying = false
+                } else {
+                    p.seekTo((startSec * 1000).toInt())
+                    p.start()
+                    isPlaying = true
+                }
+            }) {
+                Text(if (isPlaying) "إيقاف المعاينة" else "تشغيل المعاينة")
+            }
+
+            Button(onClick = {
+                player?.pause()
+                isPlaying = false
                 status = trimAudio(context, uri, startSec, endSec)
             }) {
                 Text("قص وحفظ")
@@ -99,6 +142,18 @@ fun AudioStudioScreen() {
         }
 
         Text(status)
+    }
+}
+
+/** ينشئ مشغّل الصوت للمعاينة، ويعيد null عند الفشل. */
+fun createPlayer(context: Context, uri: Uri): MediaPlayer? {
+    return try {
+        MediaPlayer().apply {
+            setDataSource(context, uri)
+            prepare()
+        }
+    } catch (e: Exception) {
+        null
     }
 }
 
