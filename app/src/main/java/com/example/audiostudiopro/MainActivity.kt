@@ -1,5 +1,6 @@
 package com.example.audiostudiopro
 
+import android.Manifest
 import android.content.Context
 import android.media.MediaMetadataRetriever
 import android.media.MediaPlayer
@@ -25,6 +26,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -67,31 +69,53 @@ fun AudioStudioScreen() {
     var echoDelaySec by remember { mutableFloatStateOf(0.3f) }
     var echoFeedback by remember { mutableFloatStateOf(0.4f) }
     var echoMix by remember { mutableFloatStateOf(0f) }
-    var status by remember { mutableStateOf("اختر ملف صوت للبدء") }
+    var status by remember { mutableStateOf("اختر ملف صوت أو سجّل للبدء") }
     var player by remember { mutableStateOf<MediaPlayer?>(null) }
     var isPlaying by remember { mutableStateOf(false) }
+    var isRecording by remember { mutableStateOf(false) }
+    val recorder = remember { Recorder(context) }
 
     DisposableEffect(Unit) {
-        onDispose { player?.release() }
+        onDispose {
+            player?.release()
+            if (recorder.isRecording) recorder.stop()
+        }
+    }
+
+    fun loadSource(uri: Uri) {
+        player?.release()
+        player = null
+        isPlaying = false
+
+        sourceUri = uri
+        durationSec = readDurationSec(context, uri)
+        startSec = 0f
+        endSec = durationSec
+        fadeInSec = 0f
+        fadeOutSec = 0f
+        echoMix = 0f
+        player = createPlayer(context, uri)
+        status = if (durationSec > 0f) "تم تحميل الملف" else "تعذر قراءة مدة الملف"
     }
 
     val picker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
-        if (uri != null) {
-            player?.release()
-            player = null
-            isPlaying = false
+        if (uri != null) loadSource(uri)
+    }
 
-            sourceUri = uri
-            durationSec = readDurationSec(context, uri)
-            startSec = 0f
-            endSec = durationSec
-            fadeInSec = 0f
-            fadeOutSec = 0f
-            echoMix = 0f
-            player = createPlayer(context, uri)
-            status = if (durationSec > 0f) "تم تحميل الملف" else "تعذر قراءة مدة الملف"
+    val micPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            if (recorder.start()) {
+                isRecording = true
+                status = "جارٍ التسجيل..."
+            } else {
+                status = "تعذر بدء التسجيل"
+            }
+        } else {
+            status = "يلزم إذن الميكروفون للتسجيل"
         }
     }
 
@@ -113,12 +137,34 @@ fun AudioStudioScreen() {
     ) {
         Text("Audio Studio Pro", style = MaterialTheme.typography.headlineMedium)
 
-        Button(onClick = { picker.launch(arrayOf("audio/*")) }) {
+        Button(
+            onClick = { picker.launch(arrayOf("audio/*")) },
+            enabled = !isRecording
+        ) {
             Text("اختيار ملف صوت")
         }
 
+        Button(onClick = {
+            if (isRecording) {
+                val file = recorder.stop()
+                isRecording = false
+                if (file != null) {
+                    loadSource(Uri.fromFile(file))
+                    status = "تم إيقاف التسجيل وتحميله"
+                } else {
+                    status = "فشل حفظ التسجيل"
+                }
+            } else {
+                if (player != null) player?.release()
+                player = null
+                micPermission.launch(Manifest.permission.RECORD_AUDIO)
+            }
+        }) {
+            Text(if (isRecording) "إيقاف التسجيل" else "تسجيل من الميكروفون")
+        }
+
         val uri = sourceUri
-        if (uri != null && durationSec > 0f) {
+        if (uri != null && durationSec > 0f && !isRecording) {
             Text("المدة: ${"%.2f".format(durationSec)} ثانية")
 
             Text("بداية القص: ${"%.1f".format(startSec)} ث")
