@@ -71,7 +71,19 @@ data class Preset(
             Preset("صوت روبوت", distortion = 0.4f, echoMix = 0.3f, echoDelay = 0.12f, echoFeedback = 0.5f, builtIn = true),
             Preset("صوت عميق", bass = 0.7f, eqLow = 4f, pitch = -3f, builtIn = true),
             Preset("صوت هادئ", clean = true, gate = 0.7f, compressor = 0.3f, builtIn = true),
-            Preset("صوت مزدوج", doubler = 0.8f, chorus = 0.3f, builtIn = true)
+            Preset("صوت مزدوج", doubler = 0.8f, chorus = 0.3f, builtIn = true),
+            Preset(
+                "قاعة مسجد",
+                reverb = 0.7f,
+                echoMix = 0.2f,
+                echoDelay = 0.6f,
+                echoFeedback = 0.25f,
+                compressor = 0.2f,
+                eqLow = 0f,
+                eqMid = -1f,
+                eqHigh = -4f,
+                builtIn = true
+            )
         )
     }
 }
