@@ -12,28 +12,30 @@ import java.io.RandomAccessFile
 
 object AudioExporter {
 
-    /** سبب آخر فشل، ليُعرض للمستخدم بدلاً من الصمت. */
+    /** سبب آخر فشل، ليُعرض للمستخدم. */
     var lastError: String? = null
 
-    fun trimWithFades(
+    private class Rendered(
+        val bytes: ByteArray,
+        val sampleRate: Int,
+        val channels: Int,
+        val bits: Int
+    )
+
+    /** يقص المقطع ثم يطبّق المؤثرات. يُستخدم للمعاينة والحفظ معاً. */
+    private fun render(
         context: Context,
         uri: Uri,
         startSec: Float,
         endSec: Float,
-        fadeInSec: Float,
-        fadeOutSec: Float,
-        echoDelaySec: Float,
-        echoFeedback: Float,
-        echoMix: Float,
-        clean: Boolean
-    ): String? {
-        lastError = null
-        return try {
-            val trimmedPath = WavTrimmer.trim(context, uri, startSec, endSec)
-                ?: Mp3Trimmer.trim(context, uri, startSec, endSec)
-                ?: throw IllegalStateException("لم يُقرأ الملف أو المقطع فارغ")
+        p: FxParams
+    ): Rendered {
+        val trimmedPath = WavTrimmer.trim(context, uri, startSec, endSec)
+            ?: Mp3Trimmer.trim(context, uri, startSec, endSec)
+            ?: throw IllegalStateException("لم يُقرأ الملف أو المقطع فارغ")
 
-            val trimmed = File(trimmedPath)
+        val trimmed = File(trimmedPath)
+        try {
             val header = WavTrimmer.readWavHeader(trimmed)
                 ?: throw IllegalStateException("ترويسة WAV غير صالحة")
 
@@ -42,40 +44,59 @@ object AudioExporter {
                 raf.seek(header.dataOffset)
                 raf.readFully(data)
             }
-            trimmed.delete()
 
-            var processed = data
-            if (header.bitsPerSample == 16) {
-                if (clean) {
-                    processed = AudioCleaner.clean(
-                        processed, header.channels, header.sampleRate, 0.5f
-                    )
-                }
-                if (echoMix > 0f && echoDelaySec > 0f) {
-                    processed = AudioEffects.applyEcho(
-                        processed, header.channels, header.sampleRate,
-                        echoDelaySec, echoFeedback, echoMix
-                    )
-                }
-                if (fadeInSec > 0f || fadeOutSec > 0f) {
-                    processed = AudioEffects.applyFades(
-                        processed, header.channels, header.sampleRate, fadeInSec, fadeOutSec
-                    )
-                }
+            val bytes = if (header.bitsPerSample == 16) {
+                Effects.process(data, header.channels, header.sampleRate, p)
+            } else {
+                data
             }
+            return Rendered(bytes, header.sampleRate, header.channels, header.bitsPerSample)
+        } finally {
+            trimmed.delete()
+        }
+    }
 
+    fun trimWithFades(
+        context: Context,
+        uri: Uri,
+        startSec: Float,
+        endSec: Float,
+        p: FxParams
+    ): String? {
+        lastError = null
+        return try {
+            val r = render(context, uri, startSec, endSec, p)
             val outTemp = File(context.cacheDir, "export.wav")
             FileOutputStream(outTemp).use { out ->
-                WavTrimmer.writeWavHeader(
-                    out, header.sampleRate, header.channels, header.bitsPerSample, processed.size
-                )
-                out.write(processed)
+                WavTrimmer.writeWavHeader(out, r.sampleRate, r.channels, r.bits, r.bytes.size)
+                out.write(r.bytes)
             }
-
             val name = "AudioStudioPro_${System.currentTimeMillis()}.wav"
             val saved = saveToDownloads(context, outTemp, name)
             outTemp.delete()
             saved
+        } catch (e: Throwable) {
+            lastError = "${e.javaClass.simpleName}: ${e.message ?: "بدون تفاصيل"}"
+            null
+        }
+    }
+
+    fun renderPreview(
+        context: Context,
+        uri: Uri,
+        startSec: Float,
+        endSec: Float,
+        p: FxParams
+    ): File? {
+        lastError = null
+        return try {
+            val r = render(context, uri, startSec, endSec, p)
+            val out = File(context.cacheDir, "preview.wav")
+            FileOutputStream(out).use { o ->
+                WavTrimmer.writeWavHeader(o, r.sampleRate, r.channels, r.bits, r.bytes.size)
+                o.write(r.bytes)
+            }
+            out
         } catch (e: Throwable) {
             lastError = "${e.javaClass.simpleName}: ${e.message ?: "بدون تفاصيل"}"
             null
@@ -111,95 +132,5 @@ object AudioExporter {
             file.copyTo(dest, overwrite = true)
             return dest.absolutePath
         }
-    }
-}
-
-object AudioEffects {
-
-    fun applyEcho(
-        data: ByteArray,
-        channels: Int,
-        sampleRate: Int,
-        delaySec: Float,
-        feedback: Float,
-        mix: Float
-    ): ByteArray {
-        val inFrames = data.size / (2 * channels)
-        if (inFrames == 0) return data
-
-        val fb = feedback.coerceIn(0f, 0.85f)
-        val wetMix = mix.coerceIn(0f, 1f)
-        val delayFrames = (delaySec * sampleRate).toInt().coerceAtLeast(1)
-
-        val tailFrames = if (fb <= 0.01f) {
-            0
-        } else {
-            val repeats = kotlin.math.ln(0.001f) / kotlin.math.ln(fb)
-            minOf(sampleRate * 6, (delayFrames * repeats).toInt())
-        }
-
-        val totalFrames = inFrames + tailFrames
-        val total = totalFrames * channels
-
-        val dry = FloatArray(total)
-        for (i in 0 until inFrames * channels) {
-            val idx = i * 2
-            dry[i] = ((data[idx].toInt() and 0xff) or (data[idx + 1].toInt() shl 8))
-                .toShort().toFloat()
-        }
-
-        val wet = FloatArray(total)
-        val out = ByteArray(total * 2)
-        val delayStride = delayFrames * channels
-
-        for (f in 0 until totalFrames) {
-            for (c in 0 until channels) {
-                val i = f * channels + c
-                val echo = if (f >= delayFrames) wet[i - delayStride] * fb else 0f
-                val y = (dry[i] + echo).coerceIn(-32768f, 32767f)
-                wet[i] = y
-
-                val mixed = (dry[i] * (1f - wetMix) + y * wetMix)
-                    .toInt().coerceIn(-32768, 32767)
-                out[i * 2] = (mixed and 0xff).toByte()
-                out[i * 2 + 1] = (mixed shr 8).toByte()
-            }
-        }
-        return out
-    }
-
-    fun applyFades(
-        data: ByteArray,
-        channels: Int,
-        sampleRate: Int,
-        fadeInSec: Float,
-        fadeOutSec: Float
-    ): ByteArray {
-        val out = data.copyOf()
-        val frameCount = data.size / (2 * channels)
-        val fadeInFrames = (fadeInSec * sampleRate).toInt().coerceIn(0, frameCount)
-        val fadeOutFrames = (fadeOutSec * sampleRate).toInt().coerceIn(0, frameCount)
-
-        for (f in 0 until frameCount) {
-            var gain = 1f
-            if (fadeInFrames > 0 && f < fadeInFrames) {
-                gain *= f.toFloat() / fadeInFrames
-            }
-            val fromEnd = frameCount - 1 - f
-            if (fadeOutFrames > 0 && fromEnd < fadeOutFrames) {
-                gain *= fromEnd.toFloat() / fadeOutFrames
-            }
-            if (gain >= 1f) continue
-
-            for (c in 0 until channels) {
-                val idx = (f * channels + c) * 2
-                val sample = ((out[idx].toInt() and 0xff) or (out[idx + 1].toInt() shl 8))
-                    .toShort().toInt()
-                val v = (sample * gain).toInt().coerceIn(-32768, 32767)
-                out[idx] = (v and 0xff).toByte()
-                out[idx + 1] = (v shr 8).toByte()
-            }
-        }
-        return out
     }
 }
