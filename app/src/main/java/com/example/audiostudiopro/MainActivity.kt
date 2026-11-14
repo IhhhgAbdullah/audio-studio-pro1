@@ -21,7 +21,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -33,7 +32,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
+import java.io.RandomAccessFile
 import kotlin.math.max
 import kotlin.math.min
 
@@ -60,6 +64,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun AudioStudioScreen() {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var sourceUri by remember { mutableStateOf<Uri?>(null) }
     var durationSec by remember { mutableFloatStateOf(0f) }
     var startSec by remember { mutableFloatStateOf(0f) }
@@ -94,7 +99,6 @@ fun AudioStudioScreen() {
         fadeInSec = 0f
         fadeOutSec = 0f
         echoMix = 0f
-        player = createPlayer(context, uri)
         status = if (durationSec > 0f) "تم تحميل الملف" else "تعذر قراءة مدة الملف"
     }
 
@@ -116,17 +120,6 @@ fun AudioStudioScreen() {
             }
         } else {
             status = "يلزم إذن الميكروفون للتسجيل"
-        }
-    }
-
-    LaunchedEffect(isPlaying) {
-        while (isPlaying) {
-            val p = player
-            if (p == null || !p.isPlaying || p.currentPosition >= (endSec * 1000).toInt()) {
-                p?.pause()
-                isPlaying = false
-            }
-            delay(50)
         }
     }
 
@@ -155,8 +148,9 @@ fun AudioStudioScreen() {
                     status = "فشل حفظ التسجيل"
                 }
             } else {
-                if (player != null) player?.release()
+                player?.release()
                 player = null
+                isPlaying = false
                 micPermission.launch(Manifest.permission.RECORD_AUDIO)
             }
         }) {
@@ -219,14 +213,39 @@ fun AudioStudioScreen() {
             )
 
             Button(onClick = {
-                val p = player ?: return@Button
                 if (isPlaying) {
-                    p.pause()
+                    player?.pause()
                     isPlaying = false
-                } else {
-                    p.seekTo((startSec * 1000).toInt())
-                    p.start()
-                    isPlaying = true
+                    return@Button
+                }
+                player?.release()
+                player = null
+                status = "جارٍ تجهيز المعاينة..."
+
+                val s = startSec
+                val e = endSec
+                val fi = fadeInSec.coerceIn(0f, maxFade)
+                val fo = fadeOutSec.coerceIn(0f, maxFade)
+                val ed = echoDelaySec
+                val ef = echoFeedback
+                val em = echoMix
+
+                scope.launch {
+                    val file = withContext(Dispatchers.IO) {
+                        renderPreview(context, uri, s, e, fi, fo, ed, ef, em)
+                    }
+                    if (file == null) {
+                        status = "فشل تجهيز المعاينة"
+                    } else {
+                        player = MediaPlayer().apply {
+                            setDataSource(file.absolutePath)
+                            prepare()
+                            setOnCompletionListener { isPlaying = false }
+                            start()
+                        }
+                        isPlaying = true
+                        status = "تشغيل المعاينة"
+                    }
                 }
             }) {
                 Text(if (isPlaying) "إيقاف المعاينة" else "تشغيل المعاينة")
@@ -256,15 +275,62 @@ fun AudioStudioScreen() {
     }
 }
 
-/** ينشئ مشغّل الصوت للمعاينة، ويعيد null عند الفشل. */
-fun createPlayer(context: Context, uri: Uri): MediaPlayer? {
+/**
+ * يجهّز ملف معاينة مؤقتاً بنفس خطوات الحفظ تماماً: قص، ثم Echo، ثم تدرجات.
+ * يُكتب في مجلد الكاش ولا يُحفظ في Downloads.
+ */
+fun renderPreview(
+    context: Context,
+    uri: Uri,
+    startSec: Float,
+    endSec: Float,
+    fadeInSec: Float,
+    fadeOutSec: Float,
+    echoDelaySec: Float,
+    echoFeedback: Float,
+    echoMix: Float
+): File? {
+    val trimmedPath = WavTrimmer.trim(context, uri, startSec, endSec)
+        ?: Mp3Trimmer.trim(context, uri, startSec, endSec)
+        ?: return null
+
+    val trimmed = File(trimmedPath)
     return try {
-        MediaPlayer().apply {
-            setDataSource(context, uri)
-            prepare()
+        val header = WavTrimmer.readWavHeader(trimmed) ?: return null
+
+        val data = ByteArray(header.dataSize)
+        RandomAccessFile(trimmed, "r").use { raf ->
+            raf.seek(header.dataOffset)
+            raf.readFully(data)
         }
+
+        var processed = data
+        if (header.bitsPerSample == 16) {
+            if (echoMix > 0f && echoDelaySec > 0f) {
+                processed = AudioEffects.applyEcho(
+                    processed, header.channels, header.sampleRate,
+                    echoDelaySec, echoFeedback, echoMix
+                )
+            }
+            if (fadeInSec > 0f || fadeOutSec > 0f) {
+                processed = AudioEffects.applyFades(
+                    processed, header.channels, header.sampleRate, fadeInSec, fadeOutSec
+                )
+            }
+        }
+
+        val out = File(context.cacheDir, "preview.wav")
+        FileOutputStream(out).use { o ->
+            WavTrimmer.writeWavHeader(
+                o, header.sampleRate, header.channels, header.bitsPerSample, processed.size
+            )
+            o.write(processed)
+        }
+        out
     } catch (e: Exception) {
         null
+    } finally {
+        trimmed.delete()
     }
 }
 
