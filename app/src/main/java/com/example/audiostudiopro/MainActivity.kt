@@ -50,6 +50,8 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.RandomAccessFile
 import kotlin.math.max
 import kotlin.math.min
 
@@ -168,6 +170,34 @@ object PresetBus {
     var pending: Preset? by mutableStateOf(null)
 }
 
+/**
+ * يحلل الملف المحمّل ويعيد (قيمة البوابة المقترحة، مستوى الضوضاء بالديسيبل).
+ * يقص المقطع كاملاً إلى ملف مؤقت، يقرأ عيناته، ثم يحذف الملف.
+ */
+fun analyzeNoise(context: Context, uri: Uri, durationSec: Float): Pair<Float, Float>? {
+    val path = WavTrimmer.trim(context, uri, 0f, durationSec)
+        ?: Mp3Trimmer.trim(context, uri, 0f, durationSec)
+        ?: return null
+    val f = File(path)
+    return try {
+        val h = WavTrimmer.readWavHeader(f) ?: return null
+        if (h.bitsPerSample != 16) return null
+        val data = ByteArray(h.dataSize)
+        RandomAccessFile(f, "r").use { raf ->
+            raf.seek(h.dataOffset)
+            raf.readFully(data)
+        }
+        Pair(
+            AutoNoise.suggestGate(data, h.channels, h.sampleRate),
+            AutoNoise.noiseDb(data, h.channels, h.sampleRate)
+        )
+    } catch (e: Exception) {
+        null
+    } finally {
+        f.delete()
+    }
+}
+
 @Composable
 fun AudioStudioScreen() {
     val context = LocalContext.current
@@ -195,6 +225,7 @@ fun AudioStudioScreen() {
     var enhancerAmt by remember { mutableFloatStateOf(0f) }
     var gateAmt by remember { mutableFloatStateOf(0.5f) }
     var cleanEnabled by remember { mutableStateOf(false) }
+    var analyzing by remember { mutableStateOf(false) }
     var overlayUri by remember { mutableStateOf<Uri?>(null) }
     var overlayVol by remember { mutableFloatStateOf(0.5f) }
     var status by remember { mutableStateOf("اختر ملف صوت أو سجّل للبدء") }
@@ -475,6 +506,34 @@ fun AudioStudioScreen() {
                 SliderRow("المتوسطة", "${"%+.0f".format(eqMid)} dB", eqMid, -12f..12f, AccentBlue) { eqMid = it }
                 SliderRow("العالية (أعلى من 3000 هرتز)", "${"%+.0f".format(eqHigh)} dB", eqHigh, -12f..12f, AccentBlue) { eqHigh = it }
                 SliderRow("قوة بوابة الضوضاء (Gate)", "${"%.0f".format(gateAmt * 100)}%", gateAmt, 0f..1f, AccentBlue) { gateAmt = it }
+
+                GradientButton(
+                    text = if (analyzing) "جارٍ التحليل..." else "تنقية تلقائية (تحليل الضوضاء)",
+                    brush = Brush.horizontalGradient(listOf(AccentCyan, AccentBlue)),
+                    enabled = !analyzing,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    val src = uri ?: return@GradientButton
+                    val dur = durationSec
+                    analyzing = true
+                    status = "جارٍ تحليل الضوضاء..."
+                    scope.launch {
+                        val result = withContext(Dispatchers.IO) {
+                            analyzeNoise(context, src, dur)
+                        }
+                        analyzing = false
+                        if (result == null) {
+                            status = "تعذر تحليل الملف، جرّب ملف WAV"
+                        } else {
+                            gateAmt = result.first
+                            cleanEnabled = true
+                            val db = "%.0f".format(result.second)
+                            val pct = "%.0f".format(result.first * 100)
+                            status = "مستوى الضوضاء: $db dB، تم ضبط البوابة إلى $pct% وتفعيل التنقية"
+                        }
+                    }
+                }
+
                 GradientButton(
                     text = if (cleanEnabled) "التنقية: مفعّلة" else "التنقية: متوقفة",
                     brush = Brush.horizontalGradient(
@@ -632,4 +691,4 @@ fun readDurationSec(context: Context, uri: Uri): Float {
     } finally {
         retriever.release()
     }
-}
+} 
