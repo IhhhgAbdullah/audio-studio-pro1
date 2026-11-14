@@ -12,7 +12,9 @@ import java.io.RandomAccessFile
 
 object AudioExporter {
 
-    /** يقص الملف، ثم يطبق Echo والتدرجات، ثم يحفظه في Downloads. يعيد المسار المعروض أو null. */
+    /** سبب آخر فشل، ليُعرض للمستخدم بدلاً من الصمت. */
+    var lastError: String? = null
+
     fun trimWithFades(
         context: Context,
         uri: Uri,
@@ -24,19 +26,22 @@ object AudioExporter {
         echoFeedback: Float,
         echoMix: Float
     ): String? {
-        val trimmedPath = WavTrimmer.trim(context, uri, startSec, endSec)
-            ?: Mp3Trimmer.trim(context, uri, startSec, endSec)
-            ?: return null
-
-        val trimmed = File(trimmedPath)
+        lastError = null
         return try {
-            val header = WavTrimmer.readWavHeader(trimmed) ?: return null
+            val trimmedPath = WavTrimmer.trim(context, uri, startSec, endSec)
+                ?: Mp3Trimmer.trim(context, uri, startSec, endSec)
+                ?: throw IllegalStateException("لم يُقرأ الملف أو المقطع فارغ")
+
+            val trimmed = File(trimmedPath)
+            val header = WavTrimmer.readWavHeader(trimmed)
+                ?: throw IllegalStateException("ترويسة WAV غير صالحة")
 
             val data = ByteArray(header.dataSize)
             RandomAccessFile(trimmed, "r").use { raf ->
                 raf.seek(header.dataOffset)
                 raf.readFully(data)
             }
+            trimmed.delete()
 
             var processed = data
             if (header.bitsPerSample == 16) {
@@ -65,56 +70,46 @@ object AudioExporter {
             val saved = saveToDownloads(context, outTemp, name)
             outTemp.delete()
             saved
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
+            lastError = "${e.javaClass.simpleName}: ${e.message ?: "بدون تفاصيل"}"
             null
-        } finally {
-            trimmed.delete()
         }
     }
 
-    private fun saveToDownloads(context: Context, file: File, name: String): String? {
-        return try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val resolver = context.contentResolver
-                val values = ContentValues().apply {
-                    put(MediaStore.Downloads.DISPLAY_NAME, name)
-                    put(MediaStore.Downloads.MIME_TYPE, "audio/wav")
-                    put(MediaStore.Downloads.RELATIVE_PATH, "Download/AudioStudioPro")
-                    put(MediaStore.Downloads.IS_PENDING, 1)
-                }
-                val itemUri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-                    ?: return null
-                resolver.openOutputStream(itemUri)?.use { out ->
-                    file.inputStream().use { input -> input.copyTo(out) }
-                } ?: return null
-
-                values.clear()
-                values.put(MediaStore.Downloads.IS_PENDING, 0)
-                resolver.update(itemUri, values, null, null)
-                "Download/AudioStudioPro/$name"
-            } else {
-                val dir = File(
-                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                    "AudioStudioPro"
-                )
-                dir.mkdirs()
-                val dest = File(dir, name)
-                file.copyTo(dest, overwrite = true)
-                dest.absolutePath
+    private fun saveToDownloads(context: Context, file: File, name: String): String {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val resolver = context.contentResolver
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, name)
+                put(MediaStore.Downloads.MIME_TYPE, "audio/wav")
+                put(MediaStore.Downloads.RELATIVE_PATH, "Download/AudioStudioPro")
+                put(MediaStore.Downloads.IS_PENDING, 1)
             }
-        } catch (e: Exception) {
-            null
+            val itemUri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                ?: throw IllegalStateException("تعذر إنشاء الملف في Downloads")
+            val out = resolver.openOutputStream(itemUri)
+                ?: throw IllegalStateException("تعذر فتح الملف للكتابة")
+            out.use { o -> file.inputStream().use { it.copyTo(o) } }
+
+            values.clear()
+            values.put(MediaStore.Downloads.IS_PENDING, 0)
+            resolver.update(itemUri, values, null, null)
+            return "Download/AudioStudioPro/$name"
+        } else {
+            val dir = File(
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                "AudioStudioPro"
+            )
+            dir.mkdirs()
+            val dest = File(dir, name)
+            file.copyTo(dest, overwrite = true)
+            return dest.absolutePath
         }
     }
 }
 
-/** مؤثرات تعمل على عينات PCM 16-bit. */
 object AudioEffects {
 
-    /**
-     * Echo احترافي: حلقة تأخير مع تغذية راجعة (Feedback) ومزج (Mix).
-     * يمتد الصدى بعد نهاية المقطع حتى يتلاشى إلى -60 dB، بحد أقصى 6 ثوانٍ.
-     */
     fun applyEcho(
         data: ByteArray,
         channels: Int,
@@ -130,20 +125,18 @@ object AudioEffects {
         val wetMix = mix.coerceIn(0f, 1f)
         val delayFrames = (delaySec * sampleRate).toInt().coerceAtLeast(1)
 
-        // عدد الفريمات اللازمة لتلاشي الصدى إلى -60 dB
         val tailFrames = if (fb <= 0.01f) {
             0
         } else {
             val repeats = kotlin.math.ln(0.001f) / kotlin.math.ln(fb)
-            min(sampleRate * 6, (delayFrames * repeats).toInt())
+            minOf(sampleRate * 6, (delayFrames * repeats).toInt())
         }
 
         val totalFrames = inFrames + tailFrames
-        val ch = channels
-        val total = totalFrames * ch
+        val total = totalFrames * channels
 
         val dry = FloatArray(total)
-        for (i in 0 until inFrames * ch) {
+        for (i in 0 until inFrames * channels) {
             val idx = i * 2
             dry[i] = ((data[idx].toInt() and 0xff) or (data[idx + 1].toInt() shl 8))
                 .toShort().toFloat()
@@ -151,11 +144,11 @@ object AudioEffects {
 
         val wet = FloatArray(total)
         val out = ByteArray(total * 2)
-        val delayStride = delayFrames * ch
+        val delayStride = delayFrames * channels
 
         for (f in 0 until totalFrames) {
-            for (c in 0 until ch) {
-                val i = f * ch + c
+            for (c in 0 until channels) {
+                val i = f * channels + c
                 val echo = if (f >= delayFrames) wet[i - delayStride] * fb else 0f
                 val y = (dry[i] + echo).coerceIn(-32768f, 32767f)
                 wet[i] = y
@@ -204,5 +197,3 @@ object AudioEffects {
         return out
     }
 }
-
-private fun min(a: Int, b: Int): Int = if (a < b) a else b
