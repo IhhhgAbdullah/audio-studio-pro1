@@ -4,7 +4,9 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.media.AudioFormat
 import android.media.AudioRecord
+import android.media.MediaPlayer
 import android.media.MediaRecorder
+import android.net.Uri
 import java.io.File
 import java.io.RandomAccessFile
 
@@ -14,6 +16,7 @@ class Recorder(private val context: Context) {
     private var thread: Thread? = null
     @Volatile private var recording = false
     private var outFile: File? = null
+    private var musicPlayer: MediaPlayer? = null
 
     /** مستوى الصوت الحالي بين 0 و1، يُحدَّث أثناء التسجيل. */
     @Volatile var level: Float = 0f
@@ -25,8 +28,12 @@ class Recorder(private val context: Context) {
     val isRecording: Boolean
         get() = recording
 
+    /**
+     * يبدأ التسجيل. إذا مُرّر music، تُشغَّل الموسيقى في السماعات فقط،
+     * ولا تدخل ملف التسجيل إذا كانت السماعة السلكية مستخدمة.
+     */
     @SuppressLint("MissingPermission")
-    fun start(): Boolean {
+    fun start(music: Uri? = null): Boolean {
         if (recording) return true
         val minBuf = AudioRecord.getMinBufferSize(sampleRate, channelConfig, encoding)
         if (minBuf <= 0) return false
@@ -45,6 +52,18 @@ class Recorder(private val context: Context) {
         level = 0f
         recording = true
         record.startRecording()
+
+        if (music != null) {
+            musicPlayer = try {
+                MediaPlayer().apply {
+                    setDataSource(context, music)
+                    prepare()
+                    start()
+                }
+            } catch (e: Exception) {
+                null
+            }
+        }
 
         thread = Thread {
             val buffer = ByteArray(minBuf)
@@ -80,6 +99,7 @@ class Recorder(private val context: Context) {
     fun stop(): File? {
         if (!recording) return null
         recording = false
+        releaseMusic()
         thread?.join(2000)
         audioRecord?.stop()
         audioRecord?.release()
@@ -87,6 +107,15 @@ class Recorder(private val context: Context) {
         thread = null
         level = 0f
         return outFile
+    }
+
+    private fun releaseMusic() {
+        try {
+            musicPlayer?.stop()
+        } catch (e: Exception) {
+        }
+        musicPlayer?.release()
+        musicPlayer = null
     }
 
     private fun writeHeader(raf: RandomAccessFile, dataSize: Long) {
