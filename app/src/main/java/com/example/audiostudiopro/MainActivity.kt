@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -124,7 +126,10 @@ fun AudioStudioScreen() {
     }
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -255,16 +260,23 @@ fun AudioStudioScreen() {
                 player?.pause()
                 isPlaying = false
                 status = "جارٍ القص والحفظ..."
-                val path = AudioExporter.trimWithFades(
-                    context, uri, startSec, endSec,
-                    fadeInSec.coerceIn(0f, maxFade),
-                    fadeOutSec.coerceIn(0f, maxFade),
-                    echoDelaySec, echoFeedback, echoMix
-                )
-                status = if (path != null) {
-                    "تم الحفظ في: $path"
-                } else {
-                    "فشل القص، تأكد أن الملف صوتي وصالح"
+                val s = startSec
+                val e = endSec
+                val fi = fadeInSec.coerceIn(0f, maxFade)
+                val fo = fadeOutSec.coerceIn(0f, maxFade)
+                val ed = echoDelaySec
+                val ef = echoFeedback
+                val em = echoMix
+
+                scope.launch {
+                    val path = withContext(Dispatchers.IO) {
+                        AudioExporter.trimWithFades(context, uri, s, e, fi, fo, ed, ef, em)
+                    }
+                    status = if (path != null) {
+                        "تم الحفظ في: $path"
+                    } else {
+                        "فشل الحفظ: ${AudioExporter.lastError}"
+                    }
                 }
             }) {
                 Text("قص وحفظ")
@@ -276,8 +288,7 @@ fun AudioStudioScreen() {
 }
 
 /**
- * يجهّز ملف معاينة مؤقتاً بنفس خطوات الحفظ تماماً: قص، ثم Echo، ثم تدرجات.
- * يُكتب في مجلد الكاش ولا يُحفظ في Downloads.
+ * يجهّز ملف معاينة مؤقتاً بنفس خطوات الحفظ: قص، ثم Echo، ثم تدرجات.
  */
 fun renderPreview(
     context: Context,
