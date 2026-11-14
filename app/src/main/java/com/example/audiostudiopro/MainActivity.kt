@@ -178,6 +178,7 @@ fun AudioStudioScreen() {
     var chorusAmt by remember { mutableFloatStateOf(0f) }
     var reverbAmt by remember { mutableFloatStateOf(0f) }
     var pitchSt by remember { mutableFloatStateOf(0f) }
+    var speedAmt by remember { mutableFloatStateOf(1f) }
     var eqLow by remember { mutableFloatStateOf(0f) }
     var eqMid by remember { mutableFloatStateOf(0f) }
     var eqHigh by remember { mutableFloatStateOf(0f) }
@@ -255,6 +256,7 @@ fun AudioStudioScreen() {
             chorus = chorusAmt,
             reverb = reverbAmt,
             pitchSemitones = pitchSt,
+            speed = speedAmt,
             eqLow = eqLow,
             eqMid = eqMid,
             eqHigh = eqHigh,
@@ -297,6 +299,7 @@ fun AudioStudioScreen() {
         chorusAmt = 0f
         reverbAmt = 0f
         pitchSt = 0f
+        speedAmt = 1f
         eqLow = 0f
         eqMid = 0f
         eqHigh = 0f
@@ -443,6 +446,7 @@ fun AudioStudioScreen() {
             }
 
             SectionCard(title = "تأثيرات الصوت", icon = "🎛️", accent = AccentPurple) {
+                SliderRow("السرعة (Speed) بدون تغيير النغمة", "${"%.2f".format(speedAmt)}x", speedAmt, 0.5f..2f, AccentPurple) { speedAmt = it }
                 SliderRow("تعزيز الباس (Bass)", "${"%.0f".format(bassAmt * 100)}%", bassAmt, 0f..1f, AccentPurple) { bassAmt = it }
                 SliderRow("تشويه (Distortion)", "${"%.0f".format(distAmt * 100)}%", distAmt, 0f..1f, AccentPurple) { distAmt = it }
                 SliderRow("تعدد الأصوات (Chorus)", "${"%.0f".format(chorusAmt * 100)}%", chorusAmt, 0f..1f, AccentPurple) { chorusAmt = it }
@@ -615,4 +619,4 @@ fun readDurationSec(context: Context, uri: Uri): Float {
     } finally {
         retriever.release()
     }
-}
+} 
