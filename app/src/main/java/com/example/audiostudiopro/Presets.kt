@@ -20,6 +20,7 @@ data class Preset(
     val compressor: Float = 0f,
     val doubler: Float = 0f,
     val enhancer: Float = 0f,
+    val speechEq: Float = 0f,
     val gate: Float = 0.5f,
     val clean: Boolean = false,
     val builtIn: Boolean = false
@@ -40,6 +41,7 @@ data class Preset(
         put("compressor", compressor.toDouble())
         put("doubler", doubler.toDouble())
         put("enhancer", enhancer.toDouble())
+        put("speechEq", speechEq.toDouble())
         put("gate", gate.toDouble())
         put("clean", clean)
     }
@@ -61,6 +63,7 @@ data class Preset(
             compressor = o.optDouble("compressor", 0.0).toFloat(),
             doubler = o.optDouble("doubler", 0.0).toFloat(),
             enhancer = o.optDouble("enhancer", 0.0).toFloat(),
+            speechEq = o.optDouble("speechEq", 0.0).toFloat(),
             gate = o.optDouble("gate", 0.5).toFloat(),
             clean = o.optBoolean("clean", false)
         )
@@ -96,6 +99,25 @@ data class Preset(
                 eqHigh = 1f,
                 clean = true,
                 gate = 0.5f,
+                builtIn = true
+            ),
+            Preset(
+                "مطرب عراقي شعبي",
+                bass = 0.28f,
+                distortion = 0f,
+                chorus = 0.22f,
+                reverb = 0.38f,
+                doubler = 0.18f,
+                compressor = 0.5f,
+                enhancer = 0.35f,
+                pitch = 0f,
+                eqLow = 3f,
+                eqMid = 1f,
+                eqHigh = 3f,
+                speechEq = 0.10f,
+                echoDelay = 0.28f,
+                echoFeedback = 0.20f,
+                echoMix = 0.18f,
                 builtIn = true
             )
         )
