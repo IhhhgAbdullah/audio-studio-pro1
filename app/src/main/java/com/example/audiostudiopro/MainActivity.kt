@@ -230,6 +230,7 @@ fun AudioStudioScreen() {
     var showLyrics by remember { mutableStateOf(false) }
     var overlayUri by remember { mutableStateOf<Uri?>(null) }
     var overlayVol by remember { mutableFloatStateOf(0.5f) }
+    var musicUri by remember { mutableStateOf<Uri?>(null) }
     var status by remember { mutableStateOf("اختر ملف صوت أو سجّل للبدء") }
     var player by remember { mutableStateOf<MediaPlayer?>(null) }
     var isPlaying by remember { mutableStateOf(false) }
@@ -395,13 +396,22 @@ fun AudioStudioScreen() {
         }
     }
 
+    val musicPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            musicUri = uri
+            status = "تم اختيار الموسيقى المرافقة. اسمعها بالسماعة السلكية أثناء التسجيل"
+        }
+    }
+
     val micPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
-            if (recorder.start()) {
+            if (recorder.start(musicUri)) {
                 isRecording = true
-                status = "جارٍ التسجيل..."
+                status = if (musicUri != null) "جارٍ التسجيل مع الموسيقى..." else "جارٍ التسجيل..."
             } else {
                 status = "تعذر بدء التسجيل"
             }
@@ -465,6 +475,31 @@ fun AudioStudioScreen() {
                 modifier = Modifier.weight(1f)
             ) {
                 picker.launch(arrayOf("audio/*"))
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            GradientButton(
+                text = if (musicUri == null) "موسيقى مرافقة للتسجيل" else "تغيير الموسيقى المرافقة",
+                brush = Brush.horizontalGradient(listOf(AccentGold, Color(0xFFB8860B))),
+                enabled = !isRecording,
+                modifier = Modifier.weight(1f)
+            ) {
+                musicPicker.launch(arrayOf("audio/*"))
+            }
+            if (musicUri != null) {
+                GradientButton(
+                    text = "إزالة الموسيقى",
+                    brush = Brush.horizontalGradient(listOf(Color(0xFF7F1D1D), Color(0xFFB91C1C))),
+                    enabled = !isRecording,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    musicUri = null
+                    status = "تمت إزالة الموسيقى المرافقة"
+                }
             }
         }
 
