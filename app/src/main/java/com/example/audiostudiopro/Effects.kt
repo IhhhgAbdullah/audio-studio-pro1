@@ -35,6 +35,9 @@ data class FxParams(
     val compressor: Float = 0f,
     val doubler: Float = 0f,
     val enhancer: Float = 0f,
+    val leveler: Float = 0f,
+    val speechEq: Float = 0f,
+    val dereverb: Float = 0f,
     val clean: Boolean = false,
     val gate: Float = 0.5f,
     val overlay: OverlayPcm? = null
@@ -57,7 +60,7 @@ object Effects {
                 .toShort().toFloat()
         }
 
-        // 0) Speed: تغيير السرعة مع الحفاظ على النغمة (WSOLA)
+        // 0) Speed
         if (abs(p.speed - 1f) > 0.01f) {
             x = TimeStretch.stretch(x, channels, p.speed)
         }
@@ -99,12 +102,22 @@ object Effects {
         val buf = FloatArray(total * channels)
         System.arraycopy(x, 0, buf, 0, min(x.size, buf.size))
 
-        // 2) Equalizer ثلاثي النطاق
+        // 2) Dereverb (تقليل الصدى الداخلي للتسجيل)
+        if (p.dereverb > 0f) {
+            SpeechEnhancer.dereverb(buf, channels, sampleRate, p.dereverb)
+        }
+
+        // 3) Equalizer ثلاثي النطاق
         if (p.eqLow != 0f || p.eqMid != 0f || p.eqHigh != 0f) {
             applyEq3(buf, channels, sampleRate, p)
         }
 
-        // 3) Vocal Enhancer
+        // 4) Speech EQ (وضوح الكلام)
+        if (p.speechEq > 0f) {
+            SpeechEnhancer.speechEq(buf, channels, sampleRate, p.speechEq)
+        }
+
+        // 5) Vocal Enhancer
         if (p.enhancer > 0f) {
             val amt = p.enhancer.coerceIn(0f, 1f)
             val a = 1f - exp(-2f * PI.toFloat() * 2500f / sampleRate)
@@ -120,7 +133,7 @@ object Effects {
             }
         }
 
-        // 4) Bass Boost
+        // 6) Bass Boost
         if (p.bass > 0f) {
             val a = 1f - exp(-2f * PI.toFloat() * 150f / sampleRate)
             for (c in 0 until channels) {
@@ -133,7 +146,7 @@ object Effects {
             }
         }
 
-        // 5) Distortion
+        // 7) Distortion
         if (p.distortion > 0f) {
             val d = p.distortion.coerceIn(0f, 1f)
             val k = 1f + 3f * d
@@ -144,27 +157,32 @@ object Effects {
             }
         }
 
-        // 6) Compressor
+        // 8) Compressor
         if (p.compressor > 0f) {
             applyCompressor(buf, channels, sampleRate, p.compressor.coerceIn(0f, 1f))
         }
 
-        // 7) Chorus
+        // 9) Leveler (توحيد مستوى الكلام بين الجمل)
+        if (p.leveler > 0f) {
+            SpeechEnhancer.level(buf, channels, sampleRate, p.leveler)
+        }
+
+        // 10) Chorus
         if (p.chorus > 0f) {
             applyChorus(buf, channels, sampleRate, total, p.chorus.coerceIn(0f, 1f))
         }
 
-        // 8) Vocal Doubler
+        // 11) Vocal Doubler
         if (p.doubler > 0f) {
             applyDoubler(buf, channels, sampleRate, total, p.doubler.coerceIn(0f, 1f))
         }
 
-        // 9) Reverb
+        // 12) Reverb
         if (p.reverb > 0f) {
             applyReverb(buf, channels, sampleRate, total, p.reverb.coerceIn(0f, 1f))
         }
 
-        // 10) Echo احترافي (Ping-Pong مع تصفية التغذية الراجعة)
+        // 13) Echo احترافي
         if (p.echoMix > 0f && p.echoFeedback > 0.01f) {
             ProEcho.apply(
                 buf, channels, sampleRate, total,
@@ -172,10 +190,10 @@ object Effects {
             )
         }
 
-        // 11) مزج صوت من الهاتف
+        // 14) مزج صوت من الهاتف
         p.overlay?.let { ov -> mixOverlay(buf, channels, sampleRate, total, ov) }
 
-        // 12) Fade In / Fade Out
+        // 15) Fade In / Fade Out
         if (p.fadeInSec > 0f || p.fadeOutSec > 0f) {
             val fi = (p.fadeInSec * sampleRate).toInt().coerceIn(0, total)
             val fo = (p.fadeOutSec * sampleRate).toInt().coerceIn(0, total)
