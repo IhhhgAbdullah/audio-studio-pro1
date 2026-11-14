@@ -5,48 +5,28 @@ Code
 Issues
 Pull requests
 Build APK
-Add GitHub Actions workflow to build APK #1
+Add themes.xml for application theme definitions #3
 Annotations
 1 error, 2 warnings, and 1 notice
 build
-failed 13 minutes ago in 1m 42s
+failed 1 minute ago in 39s
 2s
+0s
 1s
-1s
-24s
-1m 3s
-Run gradle :app:assembleDebug --no-daemon
+14s
+16s
+> Task :app:mergeExtDexDebug
 
-Welcome to Gradle 8.9!
-
-Here are the highlights of this release:
- - Enhanced Error and Warning Messages
- - IDE Integration Improvements
- - Daemon JVM Information
-
-For more details see https://docs.gradle.org/8.9/release-notes.html
-
-To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.9/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
-Daemon will be stopped at the end of the build 
-> Task :app:preBuild UP-TO-DATE
-> Task :app:preDebugBuild UP-TO-DATE
-> Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
-> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
-> Task :app:generateDebugResValues
-> Task :app:checkDebugAarMetadata
-> Task :app:mapDebugSourceSetPaths
-> Task :app:generateDebugResources
-ERROR: /home/runner/work/audio-studio-pro1/audio-studio-pro1/app/src/main/res/values/themes.x: Resource and asset merger: The file name must end with .xml
-
-
-> Task :app:mergeDebugResources FAILED
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run-1794656279297.json
+26 actionable tasks: 26 executed
 FAILURE: Build failed with an exception.
 
 * What went wrong:
-Execution failed for task ':app:mergeDebugResources'.
-gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run-1794655190501.json
-> /home/runner/work/audio-studio-pro1/audio-studio-pro1/app/src/main/res/values/themes.x: Error: The file name must end with .xml
-5 actionable tasks: 5 executed
+Execution failed for task ':app:processDebugResources'.
+> A failure occurred while executing com.android.build.gradle.internal.res.LinkApplicationAndroidResourcesTask$TaskAction
+   > Android resource linking failed
+     ERROR: /home/runner/work/audio-studio-pro1/audio-studio-pro1/app/src/main/AndroidManifest.xml:9:5-23:19: AAPT: error: resource style/Theme.AudioStudioPro (aka com.example.audiostudiopro:style/Theme.AudioStudioPro) not found.
+         
 
 * Try:
 > Run with --stacktrace option to get the stack trace.
@@ -54,10 +34,10 @@ gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions
 > Run with --scan to get full insights.
 > Get more help at https://help.gradle.org.
 
-BUILD FAILED in 1m 2s
+BUILD FAILED in 16s
 Error: Process completed with exit code 1.
 0s
-7s
+3s
 0s
-0s
+1s
 0s
