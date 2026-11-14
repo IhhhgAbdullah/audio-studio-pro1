@@ -15,13 +15,15 @@ class Recorder(private val context: Context) {
     @Volatile private var recording = false
     private var outFile: File? = null
 
+    /** مستوى الصوت الحالي بين 0 و1، يُحدَّث أثناء التسجيل. */
+    @Volatile var level: Float = 0f
+
     val sampleRate = 44100
     private val channelConfig = AudioFormat.CHANNEL_IN_MONO
     private val encoding = AudioFormat.ENCODING_PCM_16BIT
 
     val isRecording: Boolean get() = recording
 
-    /** يبدأ التسجيل في ملف WAV داخل مجلد التطبيق. */
     @SuppressLint("MissingPermission")
     fun start(): Boolean {
         if (recording) return true
@@ -39,6 +41,7 @@ class Recorder(private val context: Context) {
 
         outFile = file
         audioRecord = record
+        level = 0f
         recording = true
         record.startRecording()
 
@@ -46,13 +49,24 @@ class Recorder(private val context: Context) {
             val buffer = ByteArray(minBuf)
             RandomAccessFile(file, "rw").use { raf ->
                 raf.setLength(0)
-                raf.write(ByteArray(44)) // مكان الترويسة، تُكتب في النهاية
+                raf.write(ByteArray(44))
                 var total = 0L
                 while (recording) {
                     val read = record.read(buffer, 0, buffer.size)
                     if (read > 0) {
                         raf.write(buffer, 0, read)
                         total += read
+
+                        var peak = 0
+                        var i = 0
+                        while (i + 1 < read) {
+                            val s = ((buffer[i].toInt() and 0xff) or (buffer[i + 1].toInt() shl 8))
+                                .toShort().toInt()
+                            val a = if (s < 0) -s else s
+                            if (a > peak) peak = a
+                            i += 2
+                        }
+                        level = peak / 32768f
                     }
                 }
                 writeHeader(raf, total)
@@ -62,7 +76,6 @@ class Recorder(private val context: Context) {
         return true
     }
 
-    /** يوقف التسجيل ويعيد ملف WAV الناتج، أو null عند الفشل. */
     fun stop(): File? {
         if (!recording) return null
         recording = false
@@ -71,6 +84,7 @@ class Recorder(private val context: Context) {
         audioRecord?.release()
         audioRecord = null
         thread = null
+        level = 0f
         return outFile
     }
 
