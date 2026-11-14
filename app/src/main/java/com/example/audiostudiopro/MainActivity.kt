@@ -76,6 +76,7 @@ fun AudioStudioScreen() {
     var echoDelaySec by remember { mutableFloatStateOf(0.3f) }
     var echoFeedback by remember { mutableFloatStateOf(0.4f) }
     var echoMix by remember { mutableFloatStateOf(0f) }
+    var cleanEnabled by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("اختر ملف صوت أو سجّل للبدء") }
     var player by remember { mutableStateOf<MediaPlayer?>(null) }
     var isPlaying by remember { mutableStateOf(false) }
@@ -217,6 +218,10 @@ fun AudioStudioScreen() {
                 valueRange = 0f..1f
             )
 
+            Button(onClick = { cleanEnabled = !cleanEnabled }) {
+                Text(if (cleanEnabled) "التنقية: مفعّلة" else "التنقية: متوقفة")
+            }
+
             Button(onClick = {
                 if (isPlaying) {
                     player?.pause()
@@ -234,10 +239,11 @@ fun AudioStudioScreen() {
                 val ed = echoDelaySec
                 val ef = echoFeedback
                 val em = echoMix
+                val cl = cleanEnabled
 
                 scope.launch {
                     val file = withContext(Dispatchers.IO) {
-                        renderPreview(context, uri, s, e, fi, fo, ed, ef, em)
+                        renderPreview(context, uri, s, e, fi, fo, ed, ef, em, cl)
                     }
                     if (file == null) {
                         status = "فشل تجهيز المعاينة"
@@ -267,10 +273,13 @@ fun AudioStudioScreen() {
                 val ed = echoDelaySec
                 val ef = echoFeedback
                 val em = echoMix
+                val cl = cleanEnabled
 
                 scope.launch {
                     val path = withContext(Dispatchers.IO) {
-                        AudioExporter.trimWithFades(context, uri, s, e, fi, fo, ed, ef, em)
+                        AudioExporter.trimWithFades(
+                            context, uri, s, e, fi, fo, ed, ef, em, cl
+                        )
                     }
                     status = if (path != null) {
                         "تم الحفظ في: $path"
@@ -288,7 +297,7 @@ fun AudioStudioScreen() {
 }
 
 /**
- * يجهّز ملف معاينة مؤقتاً بنفس خطوات الحفظ: قص، ثم Echo، ثم تدرجات.
+ * يجهّز ملف معاينة مؤقتاً بنفس خطوات الحفظ: قص، ثم تنقية، ثم Echo، ثم تدرجات.
  */
 fun renderPreview(
     context: Context,
@@ -299,7 +308,8 @@ fun renderPreview(
     fadeOutSec: Float,
     echoDelaySec: Float,
     echoFeedback: Float,
-    echoMix: Float
+    echoMix: Float,
+    clean: Boolean
 ): File? {
     val trimmedPath = WavTrimmer.trim(context, uri, startSec, endSec)
         ?: Mp3Trimmer.trim(context, uri, startSec, endSec)
@@ -317,6 +327,11 @@ fun renderPreview(
 
         var processed = data
         if (header.bitsPerSample == 16) {
+            if (clean) {
+                processed = AudioCleaner.clean(
+                    processed, header.channels, header.sampleRate, 0.5f
+                )
+            }
             if (echoMix > 0f && echoDelaySec > 0f) {
                 processed = AudioEffects.applyEcho(
                     processed, header.channels, header.sampleRate,
