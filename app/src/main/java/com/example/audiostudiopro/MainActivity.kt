@@ -81,6 +81,9 @@ fun AudioStudioScreen() {
     var eqLow by remember { mutableFloatStateOf(0f) }
     var eqMid by remember { mutableFloatStateOf(0f) }
     var eqHigh by remember { mutableFloatStateOf(0f) }
+    var compAmt by remember { mutableFloatStateOf(0f) }
+    var doublerAmt by remember { mutableFloatStateOf(0f) }
+    var enhancerAmt by remember { mutableFloatStateOf(0f) }
     var gateAmt by remember { mutableFloatStateOf(0.5f) }
     var cleanEnabled by remember { mutableStateOf(false) }
     var overlayUri by remember { mutableStateOf<Uri?>(null) }
@@ -131,6 +134,9 @@ fun AudioStudioScreen() {
             eqLow = eqLow,
             eqMid = eqMid,
             eqHigh = eqHigh,
+            compressor = compAmt,
+            doubler = doublerAmt,
+            enhancer = enhancerAmt,
             clean = cleanEnabled,
             gate = gateAmt
         )
@@ -276,6 +282,27 @@ fun AudioStudioScreen() {
             Slider(
                 value = chorusAmt,
                 onValueChange = { chorusAmt = it },
+                valueRange = 0f..1f
+            )
+
+            Text("مضاعف الصوت (Vocal Doubler): ${"%.0f".format(doublerAmt * 100)}%")
+            Slider(
+                value = doublerAmt,
+                onValueChange = { doublerAmt = it },
+                valueRange = 0f..1f
+            )
+
+            Text("ضاغط الصوت (Compressor): ${"%.0f".format(compAmt * 100)}%")
+            Slider(
+                value = compAmt,
+                onValueChange = { compAmt = it },
+                valueRange = 0f..1f
+            )
+
+            Text("تحسين الصوت (Vocal Enhancer): ${"%.0f".format(enhancerAmt * 100)}%")
+            Slider(
+                value = enhancerAmt,
+                onValueChange = { enhancerAmt = it },
                 valueRange = 0f..1f
             )
 
