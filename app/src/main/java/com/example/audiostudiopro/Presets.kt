@@ -169,6 +169,28 @@ data class Preset(
                 echoFeedback = 0.25f,
                 echoMix = 0.22f,
                 builtIn = true
+            ),
+            Preset(
+                "تلاوة قرآنية",
+                bass = 0.15f,
+                distortion = 0f,
+                chorus = 0f,
+                reverb = 0.18f,
+                doubler = 0f,
+                compressor = 0.40f,
+                enhancer = 0.15f,
+                pitch = 0f,
+                eqLow = 1f,
+                eqMid = 2f,
+                eqHigh = 3f,
+                speechEq = 0.35f,
+                leveler = 0.45f,
+                dereverb = 0.10f,
+                gate = 0.20f,
+                echoDelay = 0.08f,
+                echoFeedback = 0.05f,
+                echoMix = 0.05f,
+                builtIn = true
             )
         )
     }
