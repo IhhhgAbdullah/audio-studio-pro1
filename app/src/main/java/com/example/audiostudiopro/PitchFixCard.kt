@@ -19,9 +19,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileOutputStream
 import java.io.RandomAccessFile
 
-/** يصحح نغمة الملف المحمّل ويكتبه كـ WAV مؤقت ثم يحفظه في Downloads. */
+/** يصحح نغمة الملف المحمّل ويحفظ الناتج كـ WAV في Downloads. */
 private fun pitchFixToDownloads(context: Context, uri: Uri, durationSec: Float, scale: ScaleChoice): String? {
     val path = WavTrimmer.trim(context, uri, 0f, durationSec)
         ?: Mp3Trimmer.trim(context, uri, 0f, durationSec)
@@ -46,12 +47,11 @@ private fun pitchFixToDownloads(context: Context, uri: Uri, durationSec: Float, 
             outBytes[i * 2 + 1] = (v shr 8).toByte()
         }
         val tmp = File(context.cacheDir, "pitchfix.wav")
-        java.io.FileOutputStream(tmp).use { o ->
+        FileOutputStream(tmp).use { o ->
             WavTrimmer.writeWavHeader(o, h.sampleRate, h.channels, 16, outBytes.size)
             o.write(outBytes)
         }
-        val name = "AudioStudioPro_PitchFix_${System.currentTimeMillis()}.wav"
-        val result = AudioExporter.saveFileToDownloads(context, tmp, name, "audio/wav")
+        val result = AudioExporter.saveFileToDownloads(context, tmp)
         tmp.delete()
         return result
     } catch (e: Exception) {
@@ -70,7 +70,7 @@ fun PitchFixCard(uri: Uri, durationSec: Float, scale: ScaleChoice) {
     var result by remember { mutableStateOf<String?>(null) }
 
     GradientButton(
-        text = if (busy) "جارٍ التصحيح..." else "تصحيح النغمة (تجريبي)",
+        text = if (busy) "جارٍ التصحيح..." else "تصحيح النغمة (تجريبي) وحفظه",
         brush = Brush.horizontalGradient(listOf(AccentGold, AccentPink)),
         enabled = !busy,
         modifier = Modifier.fillMaxWidth()
