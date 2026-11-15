@@ -370,6 +370,8 @@ fun AudioStudioScreen() {
             doublerAmt = pending.doubler
             enhancerAmt = pending.enhancer
             speechEqAmt = pending.speechEq
+            levelerAmt = pending.leveler
+            dereverbAmt = pending.dereverb
             gateAmt = pending.gate
             cleanEnabled = pending.clean
             status = if (sourceUri == null) {
@@ -476,6 +478,8 @@ fun AudioStudioScreen() {
         doubler = doublerAmt,
         enhancer = enhancerAmt,
         speechEq = speechEqAmt,
+        leveler = levelerAmt,
+        dereverb = dereverbAmt,
         gate = gateAmt,
         clean = cleanEnabled
     )
@@ -1000,4 +1004,4 @@ fun readDurationSec(context: Context, uri: Uri): Float {
     } finally {
         retriever.release()
     }
-}
+} 
