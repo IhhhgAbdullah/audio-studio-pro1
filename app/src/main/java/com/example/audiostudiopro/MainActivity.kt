@@ -11,6 +11,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,10 +22,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -40,11 +48,15 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
@@ -55,6 +67,7 @@ import java.io.FileOutputStream
 import java.io.RandomAccessFile
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -168,6 +181,50 @@ fun PresetsScreen() {
 /** ناقل المسبقة المختارة. حالة مراقَبة حتى تلتقطها الشاشة الرئيسية فوراً. */
 object PresetBus {
     var pending: Preset? by mutableStateOf(null)
+}
+
+/**
+ * كلمات كاراوكي تتحرك للأعلى أثناء التسجيل.
+ * تبدأ من أسفل الإطار وتصعد بسرعة ثابتة تحددها المدة (بالثواني).
+ */
+@Composable
+fun LiveKaraoke(lyrics: String, running: Boolean, scrollSec: Float) {
+    val progress = remember { Animatable(0f) }
+    var viewportPx by remember { mutableIntStateOf(0) }
+    var textPx by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(running, scrollSec) {
+        progress.snapTo(0f)
+        if (running) {
+            val ms = (scrollSec * 1000f).toInt().coerceAtLeast(5000)
+            progress.animateTo(1f, tween(durationMillis = ms, easing = LinearEasing))
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(220.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color(0x66101C2E))
+            .onSizeChanged { viewportPx = it.height }
+    ) {
+        val travel = (textPx + viewportPx).coerceAtLeast(1)
+        Text(
+            text = lyrics,
+            color = Color.White,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Medium,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp)
+                .onSizeChanged { textPx = it.height }
+                .offset {
+                    IntOffset(0, (viewportPx - progress.value * travel).roundToInt())
+                }
+        )
+    }
 }
 
 /** يحلل الملف المحمّل ويعيد (قيمة البوابة المقترحة، مستوى الضوضاء بالديسيبل). */
@@ -320,7 +377,10 @@ fun AudioStudioScreen() {
     var cleanEnabled by remember { mutableStateOf(false) }
     var analyzing by remember { mutableStateOf(false) }
     var pitchAnalyzing by remember { mutableStateOf(false) }
-    var showLyrics by remember { mutableStateOf(false) }
+
+    var lyricsText by remember { mutableStateOf("") }
+    var karaokeRunning by remember { mutableStateOf(false) }
+    var scrollSec by remember { mutableFloatStateOf(60f) }
 
     var scaleType by remember { mutableStateOf(ScaleType.MAJOR) }
     var scaleRoot by remember { mutableIntStateOf(0) }
@@ -557,6 +617,7 @@ fun AudioStudioScreen() {
         if (granted) {
             if (recorder.start()) {
                 isRecording = true
+                karaokeRunning = true
                 status = "جارٍ التسجيل..."
             } else {
                 status = "تعذر بدء التسجيل"
@@ -569,14 +630,6 @@ fun AudioStudioScreen() {
     val uri = sourceUri
     val maxFade = maxFadeNow()
     val previewReady = previewFile != null && previewKey == currentKey()
-
-    // شاشة الكاراوكي تحل محل الشاشة الرئيسية مؤقتاً
-    if (showLyrics) {
-        Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-            LyricsScreen(durationSec = durationSec, onClose = { showLyrics = false })
-        }
-        return
-    }
 
     val currentScale = ScaleChoice(scaleType, scaleRoot)
 
@@ -601,6 +654,7 @@ fun AudioStudioScreen() {
                 if (isRecording) {
                     val file = recorder.stop()
                     isRecording = false
+                    karaokeRunning = false
                     if (file != null) {
                         loadSource(Uri.fromFile(file))
                         status = "تم إيقاف التسجيل وتحميله"
@@ -627,6 +681,38 @@ fun AudioStudioScreen() {
             if (durationSec > 0f) "المدة: ${"%.2f".format(durationSec)} ثانية" else "لا يوجد ملف محدد"
         )
 
+        SectionCard(title = "كلمات الأغنية (كاراوكي)", icon = "🎤", accent = AccentPink, initiallyExpanded = true) {
+            if (!karaokeRunning) {
+                Text(
+                    "الصق كلمات الأغنية هنا، وتبدأ بالتحرك عند ضغط التسجيل",
+                    color = Color(0xFF9FB3C8),
+                    fontSize = 12.sp
+                )
+                BasicTextField(
+                    value = lyricsText,
+                    onValueChange = { lyricsText = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(160.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Color(0x66101C2E))
+                        .padding(12.dp),
+                    textStyle = TextStyle(color = Color.White, fontSize = 16.sp)
+                )
+            } else {
+                LiveKaraoke(lyrics = lyricsText, running = true, scrollSec = scrollSec)
+            }
+            SliderRow(
+                "سرعة التمرير (مدة الصعود)",
+                "${"%.0f".format(scrollSec)} ث",
+                scrollSec,
+                10f..300f,
+                AccentPink
+            ) {
+                scrollSec = it
+            }
+        }
+
         if (isRecording) {
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 RecordingCircle(recorder)
@@ -634,14 +720,6 @@ fun AudioStudioScreen() {
         }
 
         if (uri != null && durationSec > 0f && !isRecording) {
-            GradientButton(
-                text = "كاراوكي (كلمات الأغنية)",
-                brush = Brush.horizontalGradient(listOf(AccentPink, AccentPurple)),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                showLyrics = true
-            }
-
             GradientButton(
                 text = if (pitchAnalyzing) "جارٍ تحليل النغمة..." else "تحليل النغمة (Pitch)",
                 brush = Brush.horizontalGradient(listOf(AccentCyan, AccentPurple)),
