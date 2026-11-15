@@ -102,7 +102,7 @@ object Effects {
         val buf = FloatArray(total * channels)
         System.arraycopy(x, 0, buf, 0, min(x.size, buf.size))
 
-        // 2) Dereverb (تقليل الصدى الداخلي للتسجيل)
+        // 2) Dereverb
         if (p.dereverb > 0f) {
             SpeechEnhancer.dereverb(buf, channels, sampleRate, p.dereverb)
         }
@@ -112,7 +112,7 @@ object Effects {
             applyEq3(buf, channels, sampleRate, p)
         }
 
-        // 4) Speech EQ (وضوح الكلام)
+        // 4) Speech EQ
         if (p.speechEq > 0f) {
             SpeechEnhancer.speechEq(buf, channels, sampleRate, p.speechEq)
         }
@@ -162,7 +162,7 @@ object Effects {
             applyCompressor(buf, channels, sampleRate, p.compressor.coerceIn(0f, 1f))
         }
 
-        // 9) Leveler (توحيد مستوى الكلام بين الجمل)
+        // 9) Leveler
         if (p.leveler > 0f) {
             SpeechEnhancer.level(buf, channels, sampleRate, p.leveler)
         }
@@ -319,6 +319,10 @@ object Effects {
         }
     }
 
+    /**
+     * Reverb: كل قناة تُعالَج في مكانها (In-place) لأن كل قناة تلمس فهارسها فقط،
+     * والمدخل يُقرأ قبل الكتابة، فلا حاجة لنسخة كاملة من المصفوفة.
+     */
     private fun applyReverb(buf: FloatArray, channels: Int, sampleRate: Int, total: Int, r: Float) {
         val fb = 0.6f + 0.25f * r
         val delays = intArrayOf(
@@ -327,23 +331,23 @@ object Effects {
             (0.0411f * sampleRate).toInt(),
             (0.0437f * sampleRate).toInt()
         )
-        val src = buf.copyOf()
         for (c in 0 until channels) {
             val rings = Array(delays.size) { FloatArray(delays[it]) }
             val pos = IntArray(delays.size)
             for (f in 0 until total) {
                 val i = f * channels + c
+                val input = buf[i]
                 var acc = 0f
                 for (k in delays.indices) {
                     val ring = rings[k]
                     val yOld = ring[pos[k]]
-                    val yNew = src[i] + fb * yOld
+                    val yNew = input + fb * yOld
                     ring[pos[k]] = yNew
                     pos[k] = (pos[k] + 1) % ring.size
                     acc += yNew
                 }
                 val wetS = acc / delays.size
-                buf[i] = src[i] * (1f - 0.5f * r) + wetS * 0.5f * r
+                buf[i] = input * (1f - 0.5f * r) + wetS * 0.5f * r
             }
         }
     }
@@ -361,4 +365,4 @@ object Effects {
             }
         }
     }
-} 
+}
