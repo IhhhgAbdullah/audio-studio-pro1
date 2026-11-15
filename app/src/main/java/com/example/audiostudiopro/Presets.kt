@@ -21,6 +21,8 @@ data class Preset(
     val doubler: Float = 0f,
     val enhancer: Float = 0f,
     val speechEq: Float = 0f,
+    val leveler: Float = 0f,
+    val dereverb: Float = 0f,
     val gate: Float = 0.5f,
     val clean: Boolean = false,
     val builtIn: Boolean = false
@@ -42,6 +44,8 @@ data class Preset(
         put("doubler", doubler.toDouble())
         put("enhancer", enhancer.toDouble())
         put("speechEq", speechEq.toDouble())
+        put("leveler", leveler.toDouble())
+        put("dereverb", dereverb.toDouble())
         put("gate", gate.toDouble())
         put("clean", clean)
     }
@@ -64,6 +68,8 @@ data class Preset(
             doubler = o.optDouble("doubler", 0.0).toFloat(),
             enhancer = o.optDouble("enhancer", 0.0).toFloat(),
             speechEq = o.optDouble("speechEq", 0.0).toFloat(),
+            leveler = o.optDouble("leveler", 0.0).toFloat(),
+            dereverb = o.optDouble("dereverb", 0.0).toFloat(),
             gate = o.optDouble("gate", 0.5).toFloat(),
             clean = o.optBoolean("clean", false)
         )
@@ -119,6 +125,50 @@ data class Preset(
                 echoFeedback = 0.20f,
                 echoMix = 0.18f,
                 builtIn = true
+            ),
+            Preset(
+                "محاضرة دينية",
+                bass = 0.20f,
+                distortion = 0f,
+                chorus = 0f,
+                reverb = 0.12f,
+                doubler = 0f,
+                compressor = 0.55f,
+                enhancer = 0.20f,
+                pitch = 0f,
+                eqLow = 1f,
+                eqMid = 3f,
+                eqHigh = 3f,
+                speechEq = 0.50f,
+                leveler = 0.60f,
+                dereverb = 0.20f,
+                gate = 0.30f,
+                echoDelay = 0.10f,
+                echoFeedback = 0.10f,
+                echoMix = 0.08f,
+                builtIn = true
+            ),
+            Preset(
+                "إنشاد إسلامي",
+                bass = 0.32f,
+                distortion = 0.08f,
+                chorus = 0.15f,
+                reverb = 0.38f,
+                doubler = 0.22f,
+                compressor = 0.65f,
+                enhancer = 0.30f,
+                pitch = 0f,
+                eqLow = 2f,
+                eqMid = 3f,
+                eqHigh = 3f,
+                speechEq = 0.35f,
+                leveler = 0.55f,
+                dereverb = 0.05f,
+                gate = 0.25f,
+                echoDelay = 0.19f,
+                echoFeedback = 0.25f,
+                echoMix = 0.22f,
+                builtIn = true
             )
         )
     }
@@ -144,4 +194,4 @@ object PresetStore {
         presets.forEach { arr.put(it.toJson()) }
         java.io.File(context.filesDir, FILE).writeText(arr.toString())
     }
-}
+} 
