@@ -729,6 +729,8 @@ fun AudioStudioScreen() {
                 )
             }
 
+            SuggestCard(uri = uri, durationSec = durationSec)
+
             SectionCard(title = "القص", icon = "✂️", accent = AccentPink, initiallyExpanded = true) {
                 SliderRow("بداية القص", "${"%.1f".format(startSec)} ث", startSec, 0f..max(durationSec, 0.1f), AccentPink) {
                     startSec = min(it, endSec)
@@ -998,4 +1000,4 @@ fun readDurationSec(context: Context, uri: Uri): Float {
     } finally {
         retriever.release()
     }
-} 
+}
