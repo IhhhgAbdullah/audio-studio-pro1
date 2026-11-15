@@ -59,7 +59,7 @@ object AudioExporter {
         }
     }
 
-    /** يكتب ترويسة WAV ثم البيانات على دفعات صغيرة لتقليل الضغط على الذاكرة أثناء الكتابة. */
+    /** يكتب ترويسة WAV ثم البيانات على دفعات صغيرة. */
     private fun writeWavInChunks(out: File, r: Rendered) {
         FileOutputStream(out).use { o ->
             WavTrimmer.writeWavHeader(o, r.sampleRate, r.channels, r.bits, r.bytes.size)
@@ -98,19 +98,44 @@ object AudioExporter {
         lastError = null
         lastSavedUri = null
         return try {
-            saveToDownloads(context, file, "AudioStudioPro_${System.currentTimeMillis()}.wav")
+            saveToDownloads(context, file, "AudioStudioPro_${System.currentTimeMillis()}.wav", "audio/wav")
         } catch (e: Throwable) {
             lastError = "${e.javaClass.simpleName}: ${e.message ?: "بدون تفاصيل"}"
             null
         }
     }
 
-    private fun saveToDownloads(context: Context, file: File, name: String): String {
+    /**
+     * يحفظ الملف المعالج كـ M4A (AAC) بالجودة المختارة في Downloads/AudioStudioPro.
+     * يبدأ بمعالجة المقطع كاملاً ثم يرمّزه، ويعيد المسار المعروض أو null.
+     */
+    fun saveM4aToDownloads(
+        context: Context,
+        wav: File,
+        bitrate: Int
+    ): String? {
+        lastError = null
+        lastSavedUri = null
+        return try {
+            val m4a = File(context.cacheDir, "export.m4a")
+            if (!AacEncoder.encode(wav, m4a, bitrate)) {
+                throw IllegalStateException("فشل ترميز AAC على هذا الجهاز")
+            }
+            val result = saveToDownloads(context, m4a, "AudioStudioPro_${System.currentTimeMillis()}.m4a", "audio/mp4")
+            m4a.delete()
+            result
+        } catch (e: Throwable) {
+            lastError = "${e.javaClass.simpleName}: ${e.message ?: "بدون تفاصيل"}"
+            null
+        }
+    }
+
+    private fun saveToDownloads(context: Context, file: File, name: String, mime: String): String {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val resolver = context.contentResolver
             val values = ContentValues().apply {
                 put(MediaStore.Downloads.DISPLAY_NAME, name)
-                put(MediaStore.Downloads.MIME_TYPE, "audio/wav")
+                put(MediaStore.Downloads.MIME_TYPE, mime)
                 put(MediaStore.Downloads.RELATIVE_PATH, "Download/AudioStudioPro")
                 put(MediaStore.Downloads.IS_PENDING, 1)
             }
