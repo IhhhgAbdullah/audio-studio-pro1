@@ -9,10 +9,10 @@ import kotlin.math.roundToInt
  * تصحيح نغمة مبسط (الخطوة الأولى من PSOLA):
  * يحسب لكل نافذة (50 ms) التردد بـ YIN، ثم النوتة المسموحة في السلم،
  * ويطبق تعديلاً بحد أقصى maxCents مع تنعيم بين النوافذ.
- * الناتج بنفس طول المدخل ونفس السرعة.
  */
 object PsolaShift {
 
+    /** يغيّر النغمة فقط، وقد يختلف طول الناتج قليلاً عن المدخل. */
     fun correct(
         data: FloatArray,
         channels: Int,
@@ -25,7 +25,6 @@ object PsolaShift {
         if (frames < win * 2) return data
         val out = FloatArray(data.size)
 
-        // قيمة النسبة لكل نافذة: 1 يعني بلا تعديل
         val windows = (frames + win - 1) / win
         val ratios = FloatArray(windows) { 1f }
 
@@ -33,7 +32,6 @@ object PsolaShift {
             val start = w * win
             if (start + win > frames) break
             val bytes = ByteArray(win * channels * 2)
-            // تحويل النافذة إلى بايتات PCM لتستخدمها YinPitch
             for (i in 0 until win * channels) {
                 val v = data[start * channels + i].toInt().coerceIn(-32768, 32767)
                 bytes[i * 2] = (v and 0xff).toByte()
@@ -43,24 +41,20 @@ object PsolaShift {
             if (hz <= 0f) continue
             val midi = 69f + 12f * log2(hz / 440f)
             val target = nearestAllowed(midi, scale)
-            var cents = (target - midi) * 100f
-            cents = cents.coerceIn(-maxCents, maxCents)
+            val cents = ((target - midi) * 100f).coerceIn(-maxCents, maxCents)
             ratios[w] = 2f.pow(cents / 1200f)
         }
 
-        // تنعيم النسب بين النوافذ (متوسط متحرك بسيط)
         val smooth = FloatArray(windows) { ratios[it] }
         for (w in 1 until windows - 1) {
             smooth[w] = (ratios[w - 1] + 2 * ratios[w] + ratios[w + 1]) / 4f
         }
 
-        // إعادة أخذ العينات بنسبة متغيرة (تغيّر النغمة مع الحفاظ على الطول)
         for (c in 0 until channels) {
             var readPos = 0f
             for (f in 0 until frames) {
                 val w = minOf(f / win, windows - 1)
-                val r = smooth[w]
-                readPos += r
+                readPos += smooth[w]
                 val p = readPos.coerceIn(0f, (frames - 1).toFloat())
                 val i0 = p.toInt()
                 val i1 = minOf(i0 + 1, frames - 1)
@@ -71,6 +65,26 @@ object PsolaShift {
             }
         }
         return out
+    }
+
+    /**
+     * تغيير النغمة مع إعادة الطول الأصلي:
+     * أولاً تغيير النغمة، ثم ضبط الطول بـ WSOLA (TimeStretch) بنسبة الطول.
+     */
+    fun correctKeepLength(
+        data: FloatArray,
+        channels: Int,
+        sampleRate: Int,
+        scale: ScaleChoice,
+        maxCents: Float = 50f
+    ): FloatArray {
+        val inLen = data.size
+        val shifted = correct(data, channels, sampleRate, scale, maxCents)
+        if (shifted.size == 0 || shifted.size == inLen) return shifted
+        // speed > 1 يقصّر الطول، لذلك نحسبه بنسبة الطول الحالي إلى الأصلي
+        val speed = shifted.size.toFloat() / inLen.toFloat()
+        val restored = TimeStretch.stretch(shifted, channels, speed)
+        return if (restored.size >= inLen) restored.copyOf(inLen) else restored
     }
 
     private fun nearestAllowed(midi: Float, scale: ScaleChoice): Float {
@@ -89,4 +103,4 @@ object PsolaShift {
         }
         return best
     }
-}
+} 
