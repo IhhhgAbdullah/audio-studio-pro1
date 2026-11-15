@@ -12,6 +12,7 @@
 
     <application
         android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
         android:label="Audio Studio Pro"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.NoActionBar">
