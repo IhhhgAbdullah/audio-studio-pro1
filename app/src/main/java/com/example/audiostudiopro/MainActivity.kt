@@ -339,9 +339,11 @@ fun buildPreview(
     e: Float,
     p: FxParams,
     music: OverlayPcm?,
-    ms: MusicSettings
+    ms: MusicSettings,
+    pitchFix: Boolean,
+    scale: ScaleChoice
 ): File? {
-    val base = AudioExporter.renderPreview(context, uri, s, e, p) ?: return null
+    val base = AudioExporter.renderPreview(context, uri, s, e, p, pitchFix, scale) ?: return null
     if (music == null || ms.volume <= 0f) return base
     return mixMusicFile(context, base, music, ms)
 }
@@ -386,6 +388,7 @@ fun AudioStudioScreen() {
     var scaleType by remember { mutableStateOf(ScaleType.MAJOR) }
     var scaleRoot by remember { mutableIntStateOf(0) }
     var pitchCurveText by remember { mutableStateOf<String?>(null) }
+    var pitchFixOn by remember { mutableStateOf(false) }
 
     var musicUri by remember { mutableStateOf<Uri?>(null) }
     var musicPcm by remember { mutableStateOf<OverlayPcm?>(null) }
@@ -398,9 +401,8 @@ fun AudioStudioScreen() {
     var previewKey by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
 
-    // صيغة الحفظ والجودة
     var saveAsM4a by remember { mutableStateOf(false) }
-    var bitrateIndex by remember { mutableIntStateOf(1) } // 0=128, 1=192, 2=256
+    var bitrateIndex by remember { mutableIntStateOf(1) }
 
     var status by remember { mutableStateOf("اختر ملف صوت أو سجّل للبدء") }
     var player by remember { mutableStateOf<MediaPlayer?>(null) }
@@ -523,7 +525,8 @@ fun AudioStudioScreen() {
         echoDelaySec, echoFeedback, echoMix, bassAmt, distAmt, chorusAmt, reverbAmt,
         pitchSt, speedAmt, eqLow, eqMid, eqHigh, compAmt, doublerAmt, enhancerAmt,
         levelerAmt, speechEqAmt, dereverbAmt, cleanEnabled, gateAmt,
-        musicUri?.toString(), musicVol, musicDelay, musicOffset
+        musicUri?.toString(), musicVol, musicDelay, musicOffset,
+        pitchFixOn, scaleType, scaleRoot
     ).joinToString("|")
 
     fun currentAsPreset(name: String) = Preset(
@@ -572,6 +575,7 @@ fun AudioStudioScreen() {
         dereverbAmt = 0f
         gateAmt = 0.5f
         cleanEnabled = false
+        pitchFixOn = false
         status = "تمت إعادة ضبط المؤثرات"
     }
 
@@ -815,9 +819,23 @@ fun AudioStudioScreen() {
                     color = Color(0xFF9FB3C8),
                     fontSize = 11.sp
                 )
+                GradientButton(
+                    text = if (pitchFixOn) "تصحيح النغمة: مفعّل (يُطبَّق على المعاينة والحفظ)" else "تصحيح النغمة: متوقف",
+                    brush = Brush.horizontalGradient(
+                        if (pitchFixOn) listOf(AccentGold, AccentPink)
+                        else listOf(Color(0xFF334155), Color(0xFF475569))
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    pitchFixOn = !pitchFixOn
+                    previewFile = null
+                    previewKey = null
+                }
             }
 
             SuggestCard(uri = uri, durationSec = durationSec)
+            YinCompareCard(uri = uri, durationSec = durationSec)
+            PitchFixCard(uri = uri, durationSec = durationSec, scale = currentScale)
 
             SectionCard(title = "القص", icon = "✂️", accent = AccentPink, initiallyExpanded = true) {
                 SliderRow("بداية القص", "${"%.1f".format(startSec)} ث", startSec, 0f..max(durationSec, 0.1f), AccentPink) {
@@ -1039,13 +1057,15 @@ fun AudioStudioScreen() {
                     val p = buildParams()
                     val music = musicPcm
                     val ms = currentMusic()
+                    val fix = pitchFixOn
+                    val sc = currentScale
                     stopPlayback()
                     busy = true
-                    status = "جارٍ تجهيز المعاينة..."
+                    status = if (fix) "جارٍ تجهيز المعاينة مع تصحيح النغمة..." else "جارٍ تجهيز المعاينة..."
 
                     scope.launch {
                         val file = withContext(Dispatchers.IO) {
-                            buildPreview(context, src, s, e, p, music, ms)
+                            buildPreview(context, src, s, e, p, music, ms, fix, sc)
                         }
                         busy = false
                         if (file == null) {
@@ -1080,12 +1100,14 @@ fun AudioStudioScreen() {
                     val p = buildParams()
                     val music = musicPcm
                     val ms = currentMusic()
+                    val fix = pitchFixOn
+                    val sc = currentScale
                     val m4a = saveAsM4a
                     val bitrate = AacEncoder.BITRATES[bitrateIndex]
 
                     scope.launch {
                         val path = withContext(Dispatchers.IO) {
-                            val file = cached ?: buildPreview(context, src, s, e, p, music, ms)
+                            val file = cached ?: buildPreview(context, src, s, e, p, music, ms, fix, sc)
                             if (file == null) null
                             else if (m4a) AudioExporter.saveM4aToDownloads(context, file, bitrate)
                             else AudioExporter.saveFileToDownloads(context, file)
