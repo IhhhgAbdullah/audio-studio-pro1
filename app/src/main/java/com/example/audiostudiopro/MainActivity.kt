@@ -185,7 +185,7 @@ object PresetBus {
 
 /**
  * كلمات كاراوكي تتحرك للأعلى أثناء التسجيل.
- * تبدأ من أسفل الإطار وتصعد بسرعة ثابتة تحددها المدة (بالثواني).
+ * تبدأ عند 85% من ارتفاع الإطار (ظاهرة فوراً)، وتصعد بسرعة ثابتة تحددها المدة (بالثواني).
  */
 @Composable
 fun LiveKaraoke(lyrics: String, running: Boolean, scrollSec: Float) {
@@ -209,7 +209,8 @@ fun LiveKaraoke(lyrics: String, running: Boolean, scrollSec: Float) {
             .background(Color(0x66101C2E))
             .onSizeChanged { viewportPx = it.height }
     ) {
-        val travel = (textPx + viewportPx).coerceAtLeast(1)
+        val startY = viewportPx * 0.85f
+        val travel = (textPx + startY).coerceAtLeast(1f)
         Text(
             text = lyrics,
             color = Color.White,
@@ -221,7 +222,7 @@ fun LiveKaraoke(lyrics: String, running: Boolean, scrollSec: Float) {
                 .padding(12.dp)
                 .onSizeChanged { textPx = it.height }
                 .offset {
-                    IntOffset(0, (viewportPx - progress.value * travel).roundToInt())
+                    IntOffset(0, (startY - progress.value * travel).roundToInt())
                 }
         )
     }
