@@ -25,13 +25,17 @@ object AudioExporter {
         val bytes: ByteArray
     )
 
-    /** يقص المقطع ثم يطبّق المؤثرات، ويعيد البيانات الناتجة مع معلومات الترويسة. */
+    /**
+     * يقص المقطع، ثم (إن كان التصحيح مفعّلاً) يصحح النغمة نحو السلم، ثم يطبّق المؤثرات.
+     */
     private fun render(
         context: Context,
         uri: Uri,
         startSec: Float,
         endSec: Float,
-        p: FxParams
+        p: FxParams,
+        pitchFix: Boolean,
+        scale: ScaleChoice
     ): Rendered {
         val trimmedPath = WavTrimmer.trim(context, uri, startSec, endSec)
             ?: Mp3Trimmer.trim(context, uri, startSec, endSec)
@@ -48,10 +52,22 @@ object AudioExporter {
                 raf.readFully(data)
             }
 
-            val bytes = if (header.bitsPerSample == 16) {
-                Effects.process(data, header.channels, header.sampleRate, p)
-            } else {
-                data
+            var bytes = data
+            if (header.bitsPerSample == 16) {
+                if (pitchFix) {
+                    val samples = FloatArray(data.size / 2) { i ->
+                        ((data[i * 2].toInt() and 0xff) or (data[i * 2 + 1].toInt() shl 8))
+                            .toShort().toFloat()
+                    }
+                    val fixed = PsolaShift.correctKeepLength(samples, header.channels, header.sampleRate, scale)
+                    bytes = ByteArray(fixed.size * 2)
+                    for (i in fixed.indices) {
+                        val v = fixed[i].toInt().coerceIn(-32768, 32767)
+                        bytes[i * 2] = (v and 0xff).toByte()
+                        bytes[i * 2 + 1] = (v shr 8).toByte()
+                    }
+                }
+                bytes = Effects.process(bytes, header.channels, header.sampleRate, p)
             }
             return Rendered(header.sampleRate, header.channels, header.bitsPerSample, bytes)
         } finally {
@@ -79,11 +95,13 @@ object AudioExporter {
         uri: Uri,
         startSec: Float,
         endSec: Float,
-        p: FxParams
+        p: FxParams,
+        pitchFix: Boolean = false,
+        scale: ScaleChoice = ScaleChoice(ScaleType.MAJOR, 0)
     ): File? {
         lastError = null
         return try {
-            val r = render(context, uri, startSec, endSec, p)
+            val r = render(context, uri, startSec, endSec, p, pitchFix, scale)
             val out = File(context.cacheDir, "preview.wav")
             writeWavInChunks(out, r)
             out
@@ -105,15 +123,8 @@ object AudioExporter {
         }
     }
 
-    /**
-     * يحفظ الملف المعالج كـ M4A (AAC) بالجودة المختارة في Downloads/AudioStudioPro.
-     * يبدأ بمعالجة المقطع كاملاً ثم يرمّزه، ويعيد المسار المعروض أو null.
-     */
-    fun saveM4aToDownloads(
-        context: Context,
-        wav: File,
-        bitrate: Int
-    ): String? {
+    /** يحفظ الملف المعالج كـ M4A (AAC) بالجودة المختارة في Downloads/AudioStudioPro. */
+    fun saveM4aToDownloads(context: Context, wav: File, bitrate: Int): String? {
         lastError = null
         lastSavedUri = null
         return try {
