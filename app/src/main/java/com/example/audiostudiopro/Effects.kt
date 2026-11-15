@@ -169,12 +169,20 @@ object Effects {
 
         // 10) Chorus
         if (p.chorus > 0f) {
-            applyChorus(buf, channels, sampleRate, total, p.chorus.coerceIn(0f, 1f))
+            applyModulatedDelay(
+                buf, channels, sampleRate, total,
+                baseSec = 0.02f, depthSec = 0.005f, lfoHz = 0.5f,
+                amount = p.chorus.coerceIn(0f, 1f), dryKeep = 0.5f
+            )
         }
 
         // 11) Vocal Doubler
         if (p.doubler > 0f) {
-            applyDoubler(buf, channels, sampleRate, total, p.doubler.coerceIn(0f, 1f))
+            applyModulatedDelay(
+                buf, channels, sampleRate, total,
+                baseSec = 0.018f, depthSec = 0.004f, lfoHz = 0.8f,
+                amount = p.doubler.coerceIn(0f, 1f), dryKeep = -1f
+            )
         }
 
         // 12) Reverb
@@ -270,59 +278,56 @@ object Effects {
         }
     }
 
-    private fun applyChorus(buf: FloatArray, channels: Int, sampleRate: Int, total: Int, amount: Float) {
-        val src = buf.copyOf()
-        val baseDelay = 0.02f * sampleRate
-        val depth = 0.005f * sampleRate
-        val lfoStep = 2f * PI.toFloat() * 0.5f / sampleRate
-        for (f in 0 until total) {
-            val delay = baseDelay + depth * sin(lfoStep * f)
-            val srcPos = f - delay
-            for (c in 0 until channels) {
-                val i = f * channels + c
-                val wet = if (srcPos >= 0f) {
-                    val i0 = srcPos.toInt()
-                    val frac = srcPos - i0
-                    val a = src[i0 * channels + c]
-                    val b = src[min(i0 + 1, total - 1) * channels + c]
-                    a + (b - a) * frac
-                } else {
-                    0f
-                }
-                buf[i] = src[i] * (1f - amount * 0.5f) + wet * amount * 0.5f
-            }
-        }
-    }
-
-    private fun applyDoubler(buf: FloatArray, channels: Int, sampleRate: Int, total: Int, amount: Float) {
-        val src = buf.copyOf()
-        val baseDelay = 0.018f * sampleRate
-        val depth = 0.004f * sampleRate
-        val lfoStep = 2f * PI.toFloat() * 0.8f / sampleRate
-        val mixAmt = 0.45f * amount
-        for (f in 0 until total) {
-            val delay = baseDelay + depth * sin(lfoStep * f)
-            val srcPos = f - delay
-            for (c in 0 until channels) {
-                val i = f * channels + c
-                val wet = if (srcPos >= 0f) {
-                    val i0 = srcPos.toInt()
-                    val frac = srcPos - i0
-                    val a = src[i0 * channels + c]
-                    val b = src[min(i0 + 1, total - 1) * channels + c]
-                    a + (b - a) * frac
-                } else {
-                    0f
-                }
-                buf[i] = src[i] + wet * mixAmt
-            }
-        }
-    }
-
     /**
-     * Reverb: كل قناة تُعالَج في مكانها (In-place) لأن كل قناة تلمس فهارسها فقط،
-     * والمدخل يُقرأ قبل الكتابة، فلا حاجة لنسخة كاملة من المصفوفة.
+     * تأخير متغير بموجة جيبية يُنفَّذ بمخزن دائري بحجم ثابت (أكبر تأخير ممكن + هامش).
+     * يحل محل نسخ المصفوفة كاملة، فيبقى استهلاك الذاكرة ثابتاً مهما طال التسجيل.
+     * dryKeep: معامل الصوت الأصلي؛ -1 يعني مزجاً مع الدخل كما في Doubler (src + wet*mix).
      */
+    private fun applyModulatedDelay(
+        buf: FloatArray,
+        channels: Int,
+        sampleRate: Int,
+        total: Int,
+        baseSec: Float,
+        depthSec: Float,
+        lfoHz: Float,
+        amount: Float,
+        dryKeep: Float
+    ) {
+        val baseDelay = baseSec * sampleRate
+        val depth = depthSec * sampleRate
+        val maxDelay = (baseDelay + depth).toInt() + 2
+        val ringLen = maxDelay + 2
+        val lfoStep = 2f * PI.toFloat() * lfoHz / sampleRate
+
+        for (c in 0 until channels) {
+            val ring = FloatArray(ringLen)
+            var w = 0
+            for (f in 0 until total) {
+                val i = f * channels + c
+                val input = buf[i]
+                ring[w] = input
+
+                val delay = baseDelay + depth * sin(lfoStep * f)
+                // موقع القراءة بالنسبة للعينة الحالية
+                var readPos = w - delay
+                if (readPos < 0f) readPos += ringLen
+                val i0 = readPos.toInt()
+                val frac = readPos - i0
+                val a = ring[i0 % ringLen]
+                val b = ring[(i0 + 1) % ringLen]
+                val wet = if (f >= delay.toInt() + 1) a + (b - a) * frac else 0f
+
+                buf[i] = if (dryKeep >= 0f) {
+                    input * (1f - amount * 0.5f) + wet * amount * 0.5f
+                } else {
+                    input + wet * 0.45f * amount
+                }
+                w = (w + 1) % ringLen
+            }
+        }
+    }
+
     private fun applyReverb(buf: FloatArray, channels: Int, sampleRate: Int, total: Int, r: Float) {
         val fb = 0.6f + 0.25f * r
         val delays = intArrayOf(
@@ -365,4 +370,4 @@ object Effects {
             }
         }
     }
-}
+} 
