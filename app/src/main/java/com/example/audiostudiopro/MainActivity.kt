@@ -185,7 +185,7 @@ object PresetBus {
 
 /**
  * كلمات كاراوكي تتحرك للأعلى أثناء التسجيل.
- * تبدأ عند 85% من ارتفاع الإطار (ظاهرة فوراً)، وتصعد بسرعة ثابتة تحددها المدة (بالثواني).
+ * تبدأ عند 85% من ارتفاع الإطار، وتصعد بسرعة ثابتة تحددها المدة (بالثواني).
  */
 @Composable
 fun LiveKaraoke(lyrics: String, running: Boolean, scrollSec: Float) {
@@ -398,6 +398,10 @@ fun AudioStudioScreen() {
     var previewKey by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
 
+    // صيغة الحفظ والجودة
+    var saveAsM4a by remember { mutableStateOf(false) }
+    var bitrateIndex by remember { mutableIntStateOf(1) } // 0=128, 1=192, 2=256
+
     var status by remember { mutableStateOf("اختر ملف صوت أو سجّل للبدء") }
     var player by remember { mutableStateOf<MediaPlayer?>(null) }
     var isPlaying by remember { mutableStateOf(false) }
@@ -577,8 +581,9 @@ fun AudioStudioScreen() {
             status = "احفظ الملف أولاً ثم شاركه"
             return
         }
+        val mime = if (saveAsM4a) "audio/mp4" else "audio/wav"
         val intent = Intent(Intent.ACTION_SEND).apply {
-            type = "audio/wav"
+            type = mime
             putExtra(Intent.EXTRA_STREAM, shareUri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
@@ -946,6 +951,49 @@ fun AudioStudioScreen() {
                 }
             }
 
+            SectionCard(title = "صيغة الحفظ والجودة", icon = "💿", accent = AccentGold) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    GradientButton(
+                        text = "WAV",
+                        brush = Brush.horizontalGradient(
+                            if (!saveAsM4a) listOf(AccentGold, Color(0xFFB8860B))
+                            else listOf(Color(0xFF334155), Color(0xFF475569))
+                        ),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        saveAsM4a = false
+                    }
+                    GradientButton(
+                        text = "M4A (AAC)",
+                        brush = Brush.horizontalGradient(
+                            if (saveAsM4a) listOf(AccentGold, Color(0xFFB8860B))
+                            else listOf(Color(0xFF334155), Color(0xFF475569))
+                        ),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        saveAsM4a = true
+                    }
+                }
+                if (saveAsM4a) {
+                    Text("الجودة", color = Color.White, fontSize = 13.sp)
+                    val labels = listOf("128 kbps", "192 kbps", "256 kbps")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        labels.forEachIndexed { i, label ->
+                            GradientButton(
+                                text = label,
+                                brush = Brush.horizontalGradient(
+                                    if (bitrateIndex == i) listOf(AccentCyan, AccentBlue)
+                                    else listOf(Color(0xFF334155), Color(0xFF475569))
+                                ),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                bitrateIndex = i
+                            }
+                        }
+                    }
+                }
+            }
+
             Text(
                 text = if (previewReady) "المعاينة جاهزة (لن تُعاد تعبئتها ما لم تتغير الإعدادات)"
                 else "تحتاج معاينة جديدة (ستُجهّز عند الضغط على التشغيل)",
@@ -1032,11 +1080,14 @@ fun AudioStudioScreen() {
                     val p = buildParams()
                     val music = musicPcm
                     val ms = currentMusic()
+                    val m4a = saveAsM4a
+                    val bitrate = AacEncoder.BITRATES[bitrateIndex]
 
                     scope.launch {
                         val path = withContext(Dispatchers.IO) {
                             val file = cached ?: buildPreview(context, src, s, e, p, music, ms)
                             if (file == null) null
+                            else if (m4a) AudioExporter.saveM4aToDownloads(context, file, bitrate)
                             else AudioExporter.saveFileToDownloads(context, file)
                         }
                         busy = false
