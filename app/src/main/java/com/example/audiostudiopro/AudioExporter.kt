@@ -19,13 +19,13 @@ object AudioExporter {
     var lastSavedUri: Uri? = null
 
     private class Rendered(
-        val bytes: ByteArray,
         val sampleRate: Int,
         val channels: Int,
-        val bits: Int
+        val bits: Int,
+        val bytes: ByteArray
     )
 
-    /** يقص المقطع ثم يطبّق المؤثرات. */
+    /** يقص المقطع ثم يطبّق المؤثرات، ويعيد البيانات الناتجة مع معلومات الترويسة. */
     private fun render(
         context: Context,
         uri: Uri,
@@ -53,9 +53,23 @@ object AudioExporter {
             } else {
                 data
             }
-            return Rendered(bytes, header.sampleRate, header.channels, header.bitsPerSample)
+            return Rendered(header.sampleRate, header.channels, header.bitsPerSample, bytes)
         } finally {
             trimmed.delete()
+        }
+    }
+
+    /** يكتب ترويسة WAV ثم البيانات على دفعات صغيرة لتقليل الضغط على الذاكرة أثناء الكتابة. */
+    private fun writeWavInChunks(out: File, r: Rendered) {
+        FileOutputStream(out).use { o ->
+            WavTrimmer.writeWavHeader(o, r.sampleRate, r.channels, r.bits, r.bytes.size)
+            val chunk = 64 * 1024
+            var off = 0
+            while (off < r.bytes.size) {
+                val n = minOf(chunk, r.bytes.size - off)
+                o.write(r.bytes, off, n)
+                off += n
+            }
         }
     }
 
@@ -71,10 +85,7 @@ object AudioExporter {
         return try {
             val r = render(context, uri, startSec, endSec, p)
             val out = File(context.cacheDir, "preview.wav")
-            FileOutputStream(out).use { o ->
-                WavTrimmer.writeWavHeader(o, r.sampleRate, r.channels, r.bits, r.bytes.size)
-                o.write(r.bytes)
-            }
+            writeWavInChunks(out, r)
             out
         } catch (e: Throwable) {
             lastError = "${e.javaClass.simpleName}: ${e.message ?: "بدون تفاصيل"}"
@@ -107,7 +118,7 @@ object AudioExporter {
                 ?: throw IllegalStateException("تعذر إنشاء الملف في Downloads")
             val out = resolver.openOutputStream(itemUri)
                 ?: throw IllegalStateException("تعذر فتح الملف للكتابة")
-            out.use { o -> file.inputStream().use { it.copyTo(o) } }
+            out.use { o -> file.inputStream().use { it.copyTo(o, 64 * 1024) } }
 
             values.clear()
             values.put(MediaStore.Downloads.IS_PENDING, 0)
